@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	errors "simple-database/internal/common/error"
+	errors "simple-database/internal/platform/error"
+	io2 "simple-database/internal/platform/io"
 	"simple-database/internal/table"
+	"simple-database/internal/table/column/io"
 )
 
 const (
@@ -34,8 +36,24 @@ func CreateDatabase(name string) (*Database, error) {
 	}, nil
 }
 
+func NewDatabase(name string) (*Database, error) {
+	if !exists(name) {
+		return nil, errors.NewDatabaseDoesNotExistError(name)
+	}
+	db := &Database{
+		name: name,
+		path: path(name),
+	}
+	tables, err := db.readTables()
+	if err != nil {
+		return nil, fmt.Errorf("NewDatabase: %w", err)
+	}
+	db.Tables = tables
+	return db, nil
+}
+
 func (db *Database) CreateTable(name string, columnNames []string, columns table.Columns) (*table.Table, error) {
-	path := path(name) + table.FileExtension
+	path := filepath.Join(path(db.name), name) + table.FileExtension
 	if _, err := os.Open(path); err == nil {
 		return nil, errors.NewTableAlreadyExistsError(name)
 	}
@@ -44,7 +62,8 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
 
-	t, err := table.NewTableWithColumns(f, columns, columnNames)
+	r := io2.NewReader(f)
+	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r))
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -55,6 +74,44 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 	}
 	db.Tables[name] = t
 	return t, nil
+}
+
+func (db *Database) readTables() (Tables, error) {
+	tablePaths, err := os.ReadDir(path(db.name))
+	if err != nil {
+		return nil, fmt.Errorf("readTables: %w", err)
+	}
+
+	tables := make([]*table.Table, 0)
+
+	for _, v := range tablePaths {
+		if _, err := v.Info(); err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+		f, err := os.OpenFile(
+			filepath.Join(db.path, v.Name()), os.O_APPEND|os.O_RDWR, 0644,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+
+		r := io2.NewReader(f)
+		columnDefReader := io.NewColumnDefinitionReader(r)
+		t, err := table.NewTable(f, r, columnDefReader)
+		if err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+		if err := t.ReadColumnDefinitions(); err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+		tables = append(tables, t)
+	}
+
+	tablesMap := make(Tables)
+	for _, v := range tables {
+		tablesMap[v.Name] = v
+	}
+	return tablesMap, nil
 }
 
 func exists(name string) bool {

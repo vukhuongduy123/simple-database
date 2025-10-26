@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/parser"
 )
 
@@ -14,20 +15,20 @@ type ColumnDefinitionMarshaler struct {
 }
 
 func (c *ColumnDefinitionMarshaler) Size() uint32 {
-	return parser.LenByte + // type of col name
-		parser.LenInt32 + // len of col name
+	return datatype.LenByte + // datatype of col name
+		datatype.LenInt32 + // len of col name
 		uint32(len(c.Name)) + // value of col name
-		parser.LenByte + // type of data type
-		parser.LenInt32 + // len of data type
-		uint32(binary.Size(c.DataType)) + // value of data type
-		parser.LenByte + // type of allow_null
-		parser.LenInt32 + // len of allow_null
+		datatype.LenByte + // datatype of data datatype
+		datatype.LenInt32 + // len of data datatype
+		uint32(binary.Size(c.DataType)) + // value of data datatype
+		datatype.LenByte + // datatype of allow_null
+		datatype.LenInt32 + // len of allow_null
 		uint32(binary.Size(c.AllowNull)) // value of allow_null
 }
 
 func (c *ColumnDefinitionMarshaler) MarshalBinary() ([]byte, error) {
 	buf := bytes.Buffer{}
-	typeFlag := parser.NewValueMarshaler[byte](parser.TypeColumnDefinition)
+	typeFlag := parser.NewValueMarshaler[byte](datatype.TypeColumnDefinition)
 	b, err := typeFlag.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
@@ -71,22 +72,22 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 	byteUnmarshalBinary := parser.NewValueUnmarshaler[byte]()
 	sizeUnmarshalBinary := parser.NewValueUnmarshaler[uint32]()
 
-	if err := byteUnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+parser.LenByte]); err != nil {
+	if err := byteUnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+datatype.LenByte]); err != nil {
 		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
 	}
 
 	typeFlag := byteUnmarshalBinary.Value
-	if typeFlag != parser.TypeColumnDefinition {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: not column type %b", typeFlag)
+	if typeFlag != datatype.TypeColumnDefinition {
+		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: not column datatype %b", typeFlag)
 	}
 
-	readBytes += parser.LenByte
+	readBytes += datatype.LenByte
 
-	if err := sizeUnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+parser.LenInt32]); err != nil {
+	if err := sizeUnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+datatype.LenInt32]); err != nil {
 		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
 	}
 
-	readBytes += parser.LenInt32
+	readBytes += datatype.LenInt32
 
 	nameUnmarshaler := parser.NewTLVUnmarshaler[string](parser.NewValueUnmarshaler[string]())
 	if err := nameUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {

@@ -1,4 +1,4 @@
-package parser
+package datatype
 
 const (
 	TypeInt64            byte = 1
@@ -8,6 +8,7 @@ const (
 	TypeInt32            byte = 5
 	TypeColumnDefinition byte = 99
 	TypeRecord           byte = 100
+	TypeDeletedRecord    byte = 101
 )
 
 const (

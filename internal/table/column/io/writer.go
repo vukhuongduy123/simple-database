@@ -3,7 +3,7 @@ package io
 import (
 	"fmt"
 	"io"
-	errors "simple-database/internal/common/error"
+	errors "simple-database/internal/platform/error"
 )
 
 type ColumnDefinitionWriter struct {

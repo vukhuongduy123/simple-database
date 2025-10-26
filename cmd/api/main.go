@@ -3,7 +3,7 @@ package main
 import (
 	"log"
 	"simple-database/internal"
-	"simple-database/internal/platform/parser"
+	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
 )
 
@@ -12,11 +12,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := column.NewColumn("id", parser.TypeInt64, column.NewOpts(false))
+	id, err := column.NewColumn("id", datatype.TypeInt64, column.NewOpts(false))
 	if err != nil {
 		log.Fatal(err)
 	}
-	username, err := column.NewColumn("username", parser.TypeString, column.NewOpts(false))
+	username, err := column.NewColumn("username", datatype.TypeString, column.NewOpts(false))
 	if err != nil {
 		log.Fatal(err)
 	}

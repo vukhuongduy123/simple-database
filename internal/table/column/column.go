@@ -1,7 +1,8 @@
 package column
 
 import (
-	errors "simple-database/internal/common/error"
+	"fmt"
+	errors "simple-database/internal/platform/error"
 	"simple-database/internal/table/column/parser"
 )
 
@@ -21,6 +22,17 @@ type Opts struct {
 
 func (c *Column) MarshalBinary() ([]byte, error) {
 	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts.AllowNull).MarshalBinary()
+}
+
+func (c *Column) UnmarshalBinary(data []byte) error {
+	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts.AllowNull)
+	if err := marshaler.UnmarshalBinary(data); err != nil {
+		return fmt.Errorf("Column.UnmarshalBinary: %w", err)
+	}
+	c.Name = marshaler.Name
+	c.DataType = marshaler.DataType
+	c.Opts.AllowNull = marshaler.AllowNull
+	return nil
 }
 
 func NewOpts(allowNull bool) Opts {
