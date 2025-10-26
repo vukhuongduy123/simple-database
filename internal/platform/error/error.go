@@ -1,6 +1,28 @@
 package error
 
-import "fmt"
+import (
+	"fmt"
+	"runtime"
+)
+
+// StackError wraps any error and captures a stack trace
+type StackError struct {
+	err   error
+	stack string
+}
+
+// WrapError wraps any error and captures the current stack trace
+func WrapError(err error) *StackError {
+	if err == nil {
+		return nil
+	}
+	buf := make([]byte, 1024*8)
+	n := runtime.Stack(buf, false)
+	return &StackError{
+		err:   err,
+		stack: string(buf[:n]),
+	}
+}
 
 type UnsupportedDataTypeError struct {
 	DataType string
@@ -108,7 +130,7 @@ func (e *DatabaseDoesNotExistError) Error() string {
 }
 
 func (e *CannotCreateTableExistsError) Error() string {
-	return e.name
+	return fmt.Sprintf("Cannot create table: %s", e.name)
 }
 
 func (e *IncompleteWriteError) Error() string {
@@ -133,4 +155,8 @@ func (e *ColumnNotNullableError) Error() string {
 
 func (e *MismatchingColumnsError) Error() string {
 	return fmt.Sprintf("column number mismatch: expected: %d, actual: %d", e.expected, e.actual)
+}
+
+func (e *StackError) Error() string {
+	return fmt.Sprintf("%s\nStack trace:\n%s", e.err.Error(), e.stack)
 }

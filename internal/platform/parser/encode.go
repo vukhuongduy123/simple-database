@@ -124,7 +124,7 @@ func (m *TLVMarshaler[T]) TLVLength() (uint32, error) {
 	case string:
 		return datatype.LenMeta + uint32(len(v)), nil
 	default:
-		return 0, &errors.UnsupportedDataTypeError{DataType: fmt.Sprintf("%T", v)}
+		return 0, errors.WrapError(&errors.UnsupportedDataTypeError{DataType: fmt.Sprintf("%T", v)})
 	}
 }
 

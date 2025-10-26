@@ -109,7 +109,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	for _, col := range t.columnNames {
 		val, ok := record[col]
 		if !ok {
-			return 0, fmt.Errorf("Table.Insert: missing column: %s", col)
+			return 0, errors.WrapError(fmt.Errorf("Table.Insert: missing column: %s", col))
 		}
 		tlvMarshaler := parser.NewTLVMarshaler(val)
 		length, err := tlvMarshaler.TLVLength()
@@ -167,10 +167,10 @@ func (t *Table) validateColumns(record map[string]any) error {
 
 func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interface{}, error) {
 	if err := t.ensureFilePointer(); err != nil {
-		return nil, fmt.Errorf("Table.Select: %w", err)
+		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
 	if err := t.validateWhereClause(whereClause); err != nil {
-		return nil, fmt.Errorf("Table.Select: %w", err)
+		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
 	results := make([]map[string]interface{}, 0)
 
@@ -180,12 +180,12 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 			return results, nil
 		}
 		if err != nil {
-			return nil, fmt.Errorf("Table.Select: %w", err)
+			return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
 		rawRecord := t.recordParser.Value
 
 		if err = t.ensureColumnLength(rawRecord.Record); err != nil {
-			return nil, fmt.Errorf("Table.Select: %w", err)
+			return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
 		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
 			continue
@@ -236,6 +236,10 @@ func (t *Table) seekUntil(targetType byte) error {
 }
 
 func (t *Table) validateWhereClause(whereClause map[string]interface{}) error {
+	if whereClause == nil {
+		return nil
+	}
+
 	for k := range whereClause {
 		if !slices.Contains(t.columnNames, k) {
 			return fmt.Errorf("unknown column in where statement: %s", k)
@@ -245,6 +249,10 @@ func (t *Table) validateWhereClause(whereClause map[string]interface{}) error {
 }
 
 func (t *Table) evaluateWhereClause(whereClause map[string]interface{}, record map[string]interface{}) bool {
+	if whereClause == nil {
+		return true
+	}
+
 	for k, v := range whereClause {
 		if record[k] != v {
 			return false

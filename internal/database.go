@@ -8,6 +8,7 @@ import (
 	io2 "simple-database/internal/platform/io"
 	"simple-database/internal/table"
 	"simple-database/internal/table/column/io"
+	"simple-database/internal/table/column/parser"
 )
 
 const (
@@ -63,7 +64,8 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 	}
 
 	r := io2.NewReader(f)
-	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r))
+
+	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f, columnNames))
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -97,7 +99,7 @@ func (db *Database) readTables() (Tables, error) {
 
 		r := io2.NewReader(f)
 		columnDefReader := io.NewColumnDefinitionReader(r)
-		t, err := table.NewTable(f, r, columnDefReader)
+		t, err := table.NewTable(f, r, columnDefReader, nil)
 		if err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}

@@ -1,10 +1,13 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
+	"time"
 )
 
 func main() {
@@ -31,5 +34,34 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+
+	start := time.Now()
+	for i := 0; i < 10_000_000; i++ {
+		_, err = db.Tables["users"].Insert(
+			map[string]interface{}{
+				"id":       int64(i),
+				"username": "This is a user",
+			},
+		)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+	elapsed := time.Since(start)
+	fmt.Printf("Time elapsed: %s\n", elapsed)
+
+	start = time.Now()
+	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
+		"id": int64(1),
+	})
+	elapsed = time.Since(start)
+	fmt.Printf("Time elapsed: %s\n", elapsed)
+
+	if err != nil && err != io.EOF {
+		fmt.Println(err)
+		return
+	}
+
+	fmt.Println(resultSet)
 
 }

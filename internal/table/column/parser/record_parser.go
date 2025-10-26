@@ -69,9 +69,15 @@ func (r *RecordParser) skipDeletedRecords() error {
 
 func (r *RecordParser) Parse() error {
 	read := io.NewReader(r.file)
+	if r.reader == nil {
+		r.reader = read
+	}
 
 	t, err := read.ReadByte()
 	if err != nil {
+		if err == io2.EOF {
+			return err
+		}
 		return fmt.Errorf("RecordParser.Parse: %w", err)
 	}
 	if t != datatype.TypeRecord && t != datatype.TypeDeletedRecord {
