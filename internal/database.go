@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	errors "simple-database/internal/platform/error"
+	"simple-database/internal/platform/helper"
 	io2 "simple-database/internal/platform/io"
 	"simple-database/internal/table"
 	"simple-database/internal/table/column/io"
@@ -61,6 +62,10 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 	f, err := os.Create(path)
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
+	}
+
+	if err := validateColumnsConstraint(columns); err != nil {
+		return nil, errors.WrapError(errors.NewCannotCreateTableError(err, name))
 	}
 
 	r := io2.NewReader(f)
@@ -123,4 +128,23 @@ func exists(name string) bool {
 
 func path(name string) string {
 	return filepath.Join(BaseDir, name)
+}
+
+func validateColumnsConstraint(columns table.Columns) error {
+	existedName := make(map[string]any)
+	hasUniquePrimaryKey := false
+
+	for _, c := range columns {
+		if _, existed := existedName[helper.ToString(c.Name[:])]; existed {
+			return fmt.Errorf("duplicate column name: %s", helper.ToString(c.Name[:]))
+		}
+		existedName[helper.ToString(c.Name[:])] = ""
+		if c.IsPrimaryKey && !hasUniquePrimaryKey {
+			hasUniquePrimaryKey = true
+		} else if c.IsPrimaryKey {
+			return fmt.Errorf("duplicate primary key")
+		}
+	}
+
+	return nil
 }

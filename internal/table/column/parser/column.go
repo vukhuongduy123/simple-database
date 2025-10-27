@@ -9,9 +9,10 @@ import (
 )
 
 type ColumnDefinitionMarshaler struct {
-	Name      [64]byte
-	DataType  byte
-	AllowNull bool
+	Name         [64]byte
+	DataType     byte
+	AllowNull    bool
+	IsPrimaryKey bool
 }
 
 func (c *ColumnDefinitionMarshaler) Size() uint32 {
@@ -58,6 +59,13 @@ func (c *ColumnDefinitionMarshaler) MarshalBinary() ([]byte, error) {
 
 	allowNull := parser.NewTLVMarshaler[bool](c.AllowNull)
 	b, err = allowNull.MarshalBinary()
+	if err != nil {
+		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+	}
+	buf.Write(b)
+
+	isPrimaryKey := parser.NewTLVMarshaler[bool](c.IsPrimaryKey)
+	b, err = isPrimaryKey.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
 	}
@@ -111,17 +119,26 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 	readBytes += allowNullUnmarshaler.BytesRead
 	allowNull := allowNullUnmarshaler.Value
 
+	isPrimaryKeyUnmarshaler := parser.NewTLVUnmarshaler[byte](byteUnmarshalBinary)
+	if err := allowNullUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
+		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+	}
+	readBytes += allowNullUnmarshaler.BytesRead
+	isPrimaryKey := isPrimaryKeyUnmarshaler.Value
+
 	copy(c.Name[:], name)
 	c.DataType = dataType
 	c.AllowNull = allowNull != 0
+	c.IsPrimaryKey = isPrimaryKey != 0
 
 	return nil
 }
 
-func NewColumnDefinitionMarshaler(name [64]byte, dataType byte, allowNull bool) *ColumnDefinitionMarshaler {
+func NewColumnDefinitionMarshaler(name [64]byte, dataType byte, isPrimaryKey bool, allowNull bool) *ColumnDefinitionMarshaler {
 	return &ColumnDefinitionMarshaler{
-		Name:      name,
-		DataType:  dataType,
-		AllowNull: allowNull,
+		Name:         name,
+		DataType:     dataType,
+		IsPrimaryKey: isPrimaryKey,
+		AllowNull:    allowNull,
 	}
 }

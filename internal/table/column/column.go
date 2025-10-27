@@ -11,9 +11,10 @@ const (
 )
 
 type Column struct {
-	Name     [NameLength]byte
-	DataType byte
-	Opts     Opts
+	Name         [NameLength]byte
+	DataType     byte
+	Opts         Opts
+	IsPrimaryKey bool
 }
 
 type Opts struct {
@@ -21,11 +22,11 @@ type Opts struct {
 }
 
 func (c *Column) MarshalBinary() ([]byte, error) {
-	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts.AllowNull).MarshalBinary()
+	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts.AllowNull).MarshalBinary()
 }
 
 func (c *Column) UnmarshalBinary(data []byte) error {
-	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts.AllowNull)
+	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts.AllowNull)
 	if err := marshaler.UnmarshalBinary(data); err != nil {
 		return fmt.Errorf("Column.UnmarshalBinary: %w", err)
 	}
@@ -39,13 +40,14 @@ func NewOpts(allowNull bool) Opts {
 	return Opts{AllowNull: allowNull}
 }
 
-func NewColumn(name string, dataType byte, opts Opts) (*Column, error) {
+func NewColumn(name string, dataType byte, IsPrimaryKey bool, opts Opts) (*Column, error) {
 	if len(name) > int(NameLength) {
 		return nil, errors.NewNameTooLongError(int(NameLength), len(name))
 	}
 	col := &Column{
-		DataType: dataType,
-		Opts:     opts,
+		DataType:     dataType,
+		IsPrimaryKey: IsPrimaryKey,
+		Opts:         opts,
 	}
 	copy(col.Name[:], name)
 	return col, nil

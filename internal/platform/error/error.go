@@ -130,7 +130,7 @@ func (e *DatabaseDoesNotExistError) Error() string {
 }
 
 func (e *CannotCreateTableExistsError) Error() string {
-	return fmt.Sprintf("Cannot create table: %s", e.name)
+	return fmt.Sprintf("Cannot create table: %s. Error: %s", e.name, e.err.Error())
 }
 
 func (e *IncompleteWriteError) Error() string {

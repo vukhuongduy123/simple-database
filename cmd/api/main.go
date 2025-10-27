@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"reflect"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
@@ -15,11 +16,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := column.NewColumn("id", datatype.TypeInt64, column.NewOpts(false))
+	id, err := column.NewColumn("id", datatype.TypeInt64, true, column.NewOpts(false))
 	if err != nil {
 		log.Fatal(err)
 	}
-	username, err := column.NewColumn("username", datatype.TypeString, column.NewOpts(false))
+	username, err := column.NewColumn("username", datatype.TypeString, false, column.NewOpts(false))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -36,7 +37,7 @@ func main() {
 	}
 
 	start := time.Now()
-	for i := 0; i < 10_000_000; i++ {
+	for i := 0; i < 10; i++ {
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
@@ -52,7 +53,7 @@ func main() {
 
 	start = time.Now()
 	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(1),
+		"id": int64(5),
 	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
@@ -63,5 +64,5 @@ func main() {
 	}
 
 	fmt.Println(resultSet)
-
+	fmt.Println(reflect.TypeOf(resultSet[0]))
 }
