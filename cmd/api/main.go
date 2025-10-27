@@ -36,6 +36,11 @@ func main() {
 		log.Fatal(err)
 	}
 
+	db, err = internal.NewDatabase("my_db")
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	start := time.Now()
 	for i := 0; i < 10; i++ {
 		_, err = db.Tables["users"].Insert(
@@ -48,6 +53,7 @@ func main() {
 			fmt.Println(err)
 		}
 	}
+
 	elapsed := time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	io2 "io"
 	"os"
+	"path/filepath"
 	"simple-database/internal/platform/datatype"
 	errors "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
@@ -14,7 +15,10 @@ import (
 	"simple-database/internal/table/column"
 	"simple-database/internal/table/column/io"
 	platformparser "simple-database/internal/table/column/parser"
+	"simple-database/internal/table/wal"
+	walparser "simple-database/internal/table/wal/parser"
 	"slices"
+	"strings"
 )
 
 type Columns map[string]*column.Column
@@ -24,11 +28,12 @@ const FileExtension = ".bin"
 type Table struct {
 	Name            string
 	file            *os.File
-	columnNames     []string
+	ColumnNames     []string
 	columns         Columns
 	reader          *io3.Reader
 	columnDefReader *io.ColumnDefinitionReader
 	recordParser    *platformparser.RecordParser
+	wal             *wal.WAL
 }
 
 type DeletableRecord struct {
@@ -36,8 +41,16 @@ type DeletableRecord struct {
 	len    uint32
 }
 
+func (t *Table) SetRecordParser(recParser *platformparser.RecordParser) error {
+	if recParser == nil {
+		return fmt.Errorf("Table.SetRecordParser: recParser cannot be nil")
+	}
+	t.recordParser = recParser
+	return nil
+}
+
 func (t *Table) WriteColumnDefinitions() error {
-	for _, c := range t.columnNames {
+	for _, c := range t.ColumnNames {
 		b, err := t.columns[c].MarshalBinary()
 		if err != nil {
 			return fmt.Errorf("Table.WriteColumnDefinitions: %w", err)
@@ -50,24 +63,37 @@ func (t *Table) WriteColumnDefinitions() error {
 	return nil
 }
 
-func NewTable(file *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser) (*Table, error) {
-	return &Table{
-		file:            file,
+func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser,
+	wal *wal.WAL) (*Table, error) {
+	if f == nil || reader == nil || columnDefReader == nil {
+		return nil, fmt.Errorf("NewTable: nil argument")
+	}
+	tableName, err := GetTableName(f)
+	if err != nil {
+		return nil, fmt.Errorf("NewTable: %w", err)
+	}
+	t := &Table{
+		file:            f,
+		Name:            tableName,
+		columns:         make(Columns),
 		reader:          reader,
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
-	}, nil
+		wal:             wal,
+	}
+	return t, nil
 }
 
 func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r *io3.Reader,
-	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser) (*Table, error) {
+	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL) (*Table, error) {
 	return &Table{
 		file:            file,
-		columnNames:     columnNames,
+		ColumnNames:     columnNames,
 		reader:          r,
 		columns:         columns,
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
+		wal:             wal,
 	}, nil
 }
 
@@ -91,7 +117,7 @@ func (t *Table) ReadColumnDefinitions() error {
 		}
 		colName := helper.ToString(col.Name[:])
 		t.columns[colName] = &col
-		t.columnNames = append(t.columnNames, colName)
+		t.ColumnNames = append(t.ColumnNames, colName)
 	}
 	return nil
 }
@@ -106,7 +132,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	}
 
 	var sizeOfRecord uint32 = 0
-	for _, col := range t.columnNames {
+	for _, col := range t.ColumnNames {
 		val, ok := record[col]
 		if !ok {
 			return 0, errors.WrapError(fmt.Errorf("Table.Insert: missing column: %s", col))
@@ -134,7 +160,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	}
 	buf.Write(lenBuf)
 
-	for _, col := range t.columnNames {
+	for _, col := range t.ColumnNames {
 		v := record[col]
 		tlvMarshaler := parser.NewTLVMarshaler(v)
 		b, err := tlvMarshaler.MarshalBinary()
@@ -143,13 +169,28 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		}
 		buf.Write(b)
 	}
-	n, err := t.file.Write(buf.Bytes())
+
+	walEntry, err := t.wal.Append(walparser.OpInsert, t.Name, buf.Bytes())
+
 	if err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
+
+	n, err := t.file.Write(buf.Bytes())
+
+	if err != nil {
+		return 0, fmt.Errorf("Table.Insert: %w", err)
+	}
+
 	if n != buf.Len() {
 		return 0, errors.NewIncompleteWriteError(n, buf.Len())
 	}
+
+	err = t.wal.Commit(walEntry)
+	if err != nil {
+		return 0, fmt.Errorf("Table.Insert: %w", err)
+	}
+
 	return 1, nil
 }
 
@@ -241,7 +282,7 @@ func (t *Table) validateWhereClause(whereClause map[string]interface{}) error {
 	}
 
 	for k := range whereClause {
-		if !slices.Contains(t.columnNames, k) {
+		if !slices.Contains(t.ColumnNames, k) {
 			return fmt.Errorf("unknown column in where statement: %s", k)
 		}
 	}
@@ -385,4 +426,17 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 		}
 	}
 	return len(rawRecords), nil
+}
+
+func GetTableName(f *os.File) (string, error) {
+	// path/to/db/table.bin
+	parts := strings.Split(f.Name(), ".")
+	if len(parts) != 2 {
+		return "", errors.NewInvalidFilename(f.Name())
+	}
+	filenameParts := strings.Split(parts[0], string(filepath.Separator))
+	if len(filenameParts) == 0 {
+		return "", errors.NewInvalidFilename(f.Name())
+	}
+	return filenameParts[len(filenameParts)-1], nil
 }

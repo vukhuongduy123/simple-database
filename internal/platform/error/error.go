@@ -73,6 +73,10 @@ type MismatchingColumnsError struct {
 	actual   int
 }
 
+type InvalidFilename struct {
+	filename string
+}
+
 func (e *UnsupportedDataTypeError) Error() string {
 	return fmt.Sprintf("TLV: unsupported data datatype: %s", e.DataType)
 }
@@ -117,6 +121,10 @@ func NewMismatchingColumnsError(expected, actual int) *MismatchingColumnsError {
 	return &MismatchingColumnsError{expected: expected, actual: actual}
 }
 
+func NewInvalidFilename(filename string) *InvalidFilename {
+	return &InvalidFilename{filename: filename}
+}
+
 func (e *TableAlreadyExistsError) Error() string {
 	return fmt.Sprintf("Table already exists: %s", e.name)
 }
@@ -159,4 +167,8 @@ func (e *MismatchingColumnsError) Error() string {
 
 func (e *StackError) Error() string {
 	return fmt.Sprintf("%s\nStack trace:\n%s", e.err.Error(), e.stack)
+}
+
+func (e *InvalidFilename) Error() string {
+	return fmt.Sprintf("invalid filename: %s", e.filename)
 }

@@ -33,6 +33,7 @@ func (c *Column) UnmarshalBinary(data []byte) error {
 	c.Name = marshaler.Name
 	c.DataType = marshaler.DataType
 	c.Opts.AllowNull = marshaler.AllowNull
+	c.IsPrimaryKey = marshaler.IsPrimaryKey
 	return nil
 }
 

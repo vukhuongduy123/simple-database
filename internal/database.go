@@ -10,6 +10,8 @@ import (
 	"simple-database/internal/table"
 	"simple-database/internal/table/column/io"
 	"simple-database/internal/table/column/parser"
+	"simple-database/internal/table/wal"
+	"strings"
 )
 
 const (
@@ -69,8 +71,12 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 	}
 
 	r := io2.NewReader(f)
+	walFile, err := wal.NewWal(db.path, name)
+	if err != nil {
+		return nil, errors.NewCannotCreateTableError(err, name)
+	}
 
-	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f, columnNames))
+	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f, columnNames), walFile)
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -92,11 +98,15 @@ func (db *Database) readTables() (Tables, error) {
 	tables := make([]*table.Table, 0)
 
 	for _, v := range tablePaths {
+		if strings.Contains(v.Name(), "_wal") {
+			continue
+		}
+
 		if _, err := v.Info(); err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
 		f, err := os.OpenFile(
-			filepath.Join(db.path, v.Name()), os.O_APPEND|os.O_RDWR, 0644,
+			filepath.Join(db.path, v.Name()), os.O_APPEND|os.O_RDWR, 0777,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
@@ -104,13 +114,29 @@ func (db *Database) readTables() (Tables, error) {
 
 		r := io2.NewReader(f)
 		columnDefReader := io.NewColumnDefinitionReader(r)
-		t, err := table.NewTable(f, r, columnDefReader, nil)
+		tableName, err := table.GetTableName(f)
+		if err != nil {
+			return nil, errors.NewCannotCreateTableError(err, v.Name())
+		}
+
+		walFile, err := wal.NewWal(db.path, tableName)
+		if err != nil {
+			return nil, errors.NewCannotCreateTableError(err, v.Name())
+		}
+
+		t, err := table.NewTable(f, r, columnDefReader, nil, walFile)
 		if err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
+
 		if err := t.ReadColumnDefinitions(); err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
+
+		if err = t.SetRecordParser(parser.NewRecordParser(f, t.ColumnNames)); err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+
 		tables = append(tables, t)
 	}
 
