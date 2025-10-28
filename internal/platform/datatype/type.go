@@ -9,7 +9,7 @@ const (
 	TypeColumnDefinition byte = 99
 	TypeRecord           byte = 100
 	TypeDeletedRecord    byte = 101
-	TypeWALItem          byte = 102
+	TypeWALEntry         byte = 20
 )
 
 const (
