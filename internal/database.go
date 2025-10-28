@@ -44,15 +44,17 @@ func NewDatabase(name string) (*Database, error) {
 	if !exists(name) {
 		return nil, errors.NewDatabaseDoesNotExistError(name)
 	}
-	db := &Database{
-		name: name,
-		path: path(name),
-	}
+	db := &Database{name: name, path: path(name)}
 	tables, err := db.readTables()
 	if err != nil {
 		return nil, fmt.Errorf("NewDatabase: %w", err)
 	}
 	db.Tables = tables
+	for _, t := range db.Tables {
+		if err := t.RestoreWAL(); err != nil {
+			return nil, fmt.Errorf("NewDatabase: %w", err)
+		}
+	}
 	return db, nil
 }
 
