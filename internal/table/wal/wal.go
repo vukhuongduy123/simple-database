@@ -170,6 +170,9 @@ func (w *WAL) GetRestorableData() (*RestorableData, error) {
 	data := make([]byte, 1024)
 	n, err := w.lastCommitedFile.Read(data)
 	if err != nil {
+		if err == io.EOF {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("WAL.GetRestorableData: read: %w", err)
 	}
 

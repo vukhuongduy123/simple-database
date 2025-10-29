@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	io2 "io"
+	stdio "io"
 	"os"
 	"path/filepath"
 	"simple-database/internal/platform/datatype"
@@ -15,6 +15,7 @@ import (
 	"simple-database/internal/table/column"
 	"simple-database/internal/table/column/io"
 	platformparser "simple-database/internal/table/column/parser"
+	"simple-database/internal/table/index"
 	"simple-database/internal/table/wal"
 	walparser "simple-database/internal/table/wal/parser"
 	"slices"
@@ -24,6 +25,7 @@ import (
 type Columns map[string]*column.Column
 
 const FileExtension = ".bin"
+const PageSize = 128
 
 type Table struct {
 	Name            string
@@ -98,7 +100,7 @@ func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r
 }
 
 func (t *Table) ReadColumnDefinitions() error {
-	if _, err := t.file.Seek(0, io2.SeekStart); err != nil {
+	if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
 		return fmt.Errorf("Table.ReadColumnDefinitions: %w", err)
 	}
 
@@ -106,7 +108,7 @@ func (t *Table) ReadColumnDefinitions() error {
 		buf := make([]byte, 1024)
 		n, err := t.columnDefReader.Read(buf)
 		if err != nil {
-			if err == io2.EOF {
+			if err == stdio.EOF {
 				break
 			}
 			return fmt.Errorf("Table.ReadColumnDefinitions: %w", err)
@@ -123,7 +125,7 @@ func (t *Table) ReadColumnDefinitions() error {
 }
 
 func (t *Table) Insert(record map[string]any) (int, error) {
-	if _, err := t.file.Seek(0, io2.SeekEnd); err != nil {
+	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
@@ -146,6 +148,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	}
 
 	buf := bytes.Buffer{}
+
 	byteMarshaler := parser.NewValueMarshaler(datatype.TypeRecord)
 	typeBuf, err := byteMarshaler.MarshalBinary()
 	if err != nil {
@@ -171,19 +174,13 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	}
 
 	walEntry, err := t.wal.Append(walparser.OpInsert, t.Name, buf.Bytes())
-
 	if err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	n, err := t.file.Write(buf.Bytes())
-
+	_, err = t.insertIntoPage(buf)
 	if err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
-	}
-
-	if n != buf.Len() {
-		return 0, errors.NewIncompleteWriteError(n, buf.Len())
 	}
 
 	err = t.wal.Commit(walEntry)
@@ -217,7 +214,7 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 
 	for {
 		err := t.recordParser.Parse()
-		if err == io2.EOF {
+		if err == stdio.EOF {
 			return results, nil
 		}
 		if err != nil {
@@ -237,12 +234,12 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 }
 
 func (t *Table) ensureFilePointer() error {
-	if _, err := t.file.Seek(0, io2.SeekStart); err != nil {
+	if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
 		return fmt.Errorf("Table.ensureFilePointer: %w", err)
 	}
 	if err := t.seekUntil(datatype.TypeRecord); err != nil {
-		if err == io2.EOF {
-			return nil
+		if err == stdio.EOF {
+			return err
 		}
 		return fmt.Errorf("Table.ensureFilePointer: %w", err)
 	}
@@ -253,14 +250,34 @@ func (t *Table) seekUntil(targetType byte) error {
 	for {
 		dataType, err := t.reader.ReadByte()
 		if err != nil {
-			if err == io2.EOF {
+			if err == stdio.EOF {
 				return err
 			}
 			return fmt.Errorf("Table.seekUntil: readByte: %w", err)
 		}
 		if dataType == targetType {
-			if _, err = t.file.Seek(-1*datatype.LenByte, io2.SeekCurrent); err != nil {
+			if _, err = t.file.Seek(-1*datatype.LenByte, stdio.SeekCurrent); err != nil {
 				return fmt.Errorf("Table.seekUntil: %w", err)
+			}
+			return nil
+		}
+
+		if targetType == datatype.TypeRecord && dataType == datatype.TypePage {
+			// Ignore page's len
+			if _, err := t.reader.ReadUint32(); err != nil {
+				return fmt.Errorf("Table.seekUntil: readUint32: %w", err)
+			}
+			// The first type flag inside a page should be a record
+			dataType, err = t.skipDeletedRecords()
+
+			if err != nil {
+				return fmt.Errorf("Table.seekUntil: readByte: %w", err)
+			}
+			if dataType != targetType {
+				return fmt.Errorf("Table.seekUntil: first byte inside a page should be %d but %d found", datatype.TypeRecord, dataType)
+			}
+			if _, err = t.file.Seek(-1, stdio.SeekCurrent); err != nil {
+				return fmt.Errorf("Table.seekUntil: file.Seek: %w", err)
 			}
 			return nil
 		}
@@ -270,8 +287,32 @@ func (t *Table) seekUntil(targetType byte) error {
 			return fmt.Errorf("Table.seekUntil: readUint32: %w", err)
 		}
 
-		if _, err = t.file.Seek(int64(length), io2.SeekCurrent); err != nil {
+		if _, err = t.file.Seek(int64(length), stdio.SeekCurrent); err != nil {
 			return fmt.Errorf("Table.seekUntil: %w", err)
+		}
+	}
+}
+
+func (t *Table) skipDeletedRecords() (dataType byte, err error) {
+	for {
+		dataType, err := t.reader.ReadByte()
+		if err != nil {
+			if err == stdio.EOF {
+				return 0, err
+			}
+			return 0, fmt.Errorf("Table.skipDeletedRecords: %w", err)
+		}
+		if dataType == datatype.TypeDeletedRecord {
+			l, err := t.reader.ReadUint32()
+			if err != nil {
+				return 0, fmt.Errorf("RecordParser.Parse: %w", err)
+			}
+			if _, err = t.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
+				return 0, fmt.Errorf("RecordParser.Parse: %w", err)
+			}
+		}
+		if dataType == datatype.TypeRecord {
+			return dataType, nil
 		}
 	}
 }
@@ -310,7 +351,7 @@ func (t *Table) ensureColumnLength(record map[string]interface{}) error {
 }
 func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int, e error) {
 	for _, rec := range deletableRecords {
-		if _, err := t.file.Seek(rec.offset, io2.SeekStart); err != nil {
+		if _, err := t.file.Seek(rec.offset, stdio.SeekStart); err != nil {
 			return 0, fmt.Errorf("Table.markRecordsDeleted: %w", err)
 		}
 		err := binary.Write(t.file, binary.LittleEndian, datatype.TypeDeletedRecord)
@@ -348,7 +389,7 @@ func (t *Table) Delete(whereClause map[string]interface{}) (int, error) {
 	deletableRecords := make([]*DeletableRecord, 0)
 	for {
 		if err := t.recordParser.Parse(); err != nil {
-			if err == io2.EOF {
+			if err == stdio.EOF {
 				break
 			}
 			return 0, fmt.Errorf("Table.Delete: %w", err)
@@ -362,7 +403,7 @@ func (t *Table) Delete(whereClause map[string]interface{}) (int, error) {
 			continue
 		}
 
-		pos, err := t.file.Seek(0, io2.SeekCurrent)
+		pos, err := t.file.Seek(0, stdio.SeekCurrent)
 		if err != nil {
 			return 0, fmt.Errorf("Table.Delete: %w", err)
 		}
@@ -384,7 +425,7 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 	rawRecords := make([]*platformparser.RawRecord, 0)
 	for {
 		err := t.recordParser.Parse()
-		if err == io2.EOF {
+		if err == stdio.EOF {
 			break
 		}
 		if err != nil {
@@ -401,7 +442,7 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 		}
 
 		rawRecords = append(rawRecords, rawRecord)
-		pos, err := t.file.Seek(0, io2.SeekCurrent)
+		pos, err := t.file.Seek(0, stdio.SeekCurrent)
 		if err != nil {
 			return 0, fmt.Errorf("Table.Update: %w", err)
 		}
@@ -442,7 +483,7 @@ func GetTableName(f *os.File) (string, error) {
 }
 
 func (t *Table) RestoreWAL() error {
-	if _, err := t.file.Seek(0, io2.SeekEnd); err != nil {
+	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
 		return fmt.Errorf("Table.RestoreWAL: %w", err)
 	}
 	restorableData, err := t.wal.GetRestorableData()
@@ -464,6 +505,219 @@ func (t *Table) RestoreWAL() error {
 	fmt.Printf("RestoreWAL wrote %d bytes\n", n)
 	if err = t.wal.Commit(restorableData.LastEntry); err != nil {
 		return fmt.Errorf("Table.RestoreWAL: %w", err)
+	}
+	return nil
+}
+
+func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
+	_, err := t.file.Seek(0, stdio.SeekStart)
+	if err != nil {
+		return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+	}
+
+	for {
+		err = t.seekUntil(datatype.TypePage)
+		if err != nil {
+			if err == stdio.EOF {
+				return t.insertEmptyPage()
+			}
+
+			return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+		}
+
+		// Skipping the type definition byte
+		if _, err = t.reader.ReadByte(); err != nil {
+			return nil, fmt.Errorf("Table.seekToNextPage: readByte: %w", err)
+		}
+
+		currPageLen, err := t.reader.ReadUint32()
+		if err != nil {
+			return nil, fmt.Errorf("Table.seekToNextPage: readUint32: %w", err)
+		}
+
+		if currPageLen+lenToFit <= PageSize {
+			pagePos, err := t.file.Seek(-1*datatype.LenMeta, stdio.SeekCurrent)
+			if err != nil {
+				return nil, fmt.Errorf("Table.seekToNextPage: file.Seek: %w", err)
+			}
+
+			_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
+			return index.NewPage(pagePos), err
+		}
+	}
+
+}
+
+func (t *Table) insertEmptyPage() (*index.Page, error) {
+	buf := bytes.Buffer{}
+
+	// type
+	if err := binary.Write(&buf, binary.LittleEndian, datatype.TypePage); err != nil {
+		return nil, fmt.Errorf("Table.insertEmptyPage: type: %w", err)
+	}
+	// length
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(0)); err != nil {
+		return nil, fmt.Errorf("Table.insertEmptyPage: len: %w", err)
+	}
+	n, err := t.file.Write(buf.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("Table.insertEmptyPage: file.Write: %w", err)
+	}
+	if n != buf.Len() {
+		return nil, errors.NewIncompleteWriteError(buf.Len(), n)
+	}
+
+	curPos, err := t.file.Seek(0, stdio.SeekCurrent)
+	if err != nil {
+		return nil, fmt.Errorf("Table.insertEmptyPage: %w", err)
+	}
+	// startPos should point at the very first byte, that is types.TypePage and 5 bytes before the current pos
+	startPos := curPos - (datatype.LenMeta)
+	if startPos <= 0 {
+		return nil, fmt.Errorf("Table.insertEmptyPage: unable to insert new page: start should be positive: %d", startPos)
+	}
+	return index.NewPage(startPos), nil
+}
+
+// insertIntoPage finds the first page that can fit buf and writes it into the page
+func (t *Table) insertIntoPage(buf bytes.Buffer) (*index.Page, error) {
+	page, err := t.seekToNextPage(uint32(buf.Len()))
+	if err != nil {
+		return nil, fmt.Errorf("Table.insertIntoPage: %w", err)
+	}
+	n, err := t.file.Write(buf.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("Table.insertIntoPage: file.Write: %w", err)
+	}
+	if n != buf.Len() {
+		return nil, errors.NewIncompleteWriteError(buf.Len(), n)
+	}
+	// seek back to the beginning of the page
+	if _, err = t.file.Seek(page.StartPos, stdio.SeekStart); err != nil {
+		return nil, fmt.Errorf("Table.insertIntoPage: file.Seek: %w", err)
+	}
+	return page, t.updatePageSize(page.StartPos, int32(buf.Len()))
+}
+
+// updatePageSize increases or decreases the size of a page by offset
+// if the new size is 0, the page is removed
+func (t *Table) updatePageSize(page int64, offset int32) (e error) {
+	origPos, err := t.file.Seek(0, stdio.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+	defer func() {
+		_, err := t.file.Seek(origPos, stdio.SeekStart)
+		e = err
+	}()
+
+	if _, err = t.file.Seek(page, stdio.SeekStart); err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+
+	dataType, err := t.reader.ReadByte()
+	if err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+	if dataType != datatype.TypePage {
+		return fmt.Errorf("Table.updatePageSize: file pointer is at wrong position: expected: %d, actual: %d", datatype.TypePage, dataType)
+	}
+	length, err := t.reader.ReadUint32()
+	if err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+	_, err = t.file.Seek(-1*datatype.LenInt32, stdio.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+
+	var newLength uint32
+	if offset >= 0 {
+		newLength = length + uint32(offset)
+	} else {
+		newLength = length - uint32(-offset)
+	}
+
+	marshaler := parser.NewValueMarshaler[uint32](newLength)
+	b, err := marshaler.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("Table.updatePageSize: %w", err)
+	}
+
+	n, err := t.file.Write(b)
+	if n != len(b) {
+		return errors.NewIncompleteWriteError(len(b), n)
+	}
+
+	if newLength == 0 {
+		if err = t.removeEmptyPage(page); err != nil {
+			return fmt.Errorf("Table.updatePageSize: %w", err)
+		}
+	}
+	return nil
+}
+
+func (t *Table) removeEmptyPage(page int64) (e error) {
+	origPos, err := t.file.Seek(0, stdio.SeekCurrent)
+	if err != nil {
+		return fmt.Errorf("Table.removePage: %w", err)
+	}
+	defer func() {
+		_, err := t.file.Seek(origPos, stdio.SeekStart)
+		e = err
+	}()
+
+	if _, err = t.file.Seek(page, stdio.SeekStart); err != nil {
+		return fmt.Errorf("Table.removePage: %w", err)
+	}
+	dataType, err := t.reader.ReadByte()
+	if err != nil {
+		return fmt.Errorf("Table.removePage: %w", err)
+	}
+	if dataType != datatype.TypePage {
+		return fmt.Errorf("Table.removePage: file pointer points to invalid byte: %d", dataType)
+	}
+	length, err := t.reader.ReadUint32()
+	if err != nil {
+		return fmt.Errorf("Table.removePage: %w", err)
+	}
+	if length != 0 {
+		return fmt.Errorf("Table.removePage: New page not empty %w", err)
+	}
+	stat, err := t.file.Stat()
+	if err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	beforeReader := stdio.NewSectionReader(t.file, 0, page)
+	afterReader := stdio.NewSectionReader(t.file, page+datatype.LenMeta, stat.Size())
+	beforeBuf := make([]byte, page)
+
+	if _, err = beforeReader.Read(beforeBuf); err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	afterBuf := make([]byte, stat.Size()-(page+datatype.LenMeta))
+	if _, err = afterReader.Read(afterBuf); err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	if _, err = t.file.Seek(0, stdio.SeekStart); err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	bw, err := t.file.Write(beforeBuf)
+	if err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	aw, err := t.file.Write(afterBuf)
+	if err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+
+	if err = t.file.Truncate(int64(bw + aw)); err != nil {
+		return fmt.Errorf("Table.removeEmptyPage: %w", err)
 	}
 	return nil
 }

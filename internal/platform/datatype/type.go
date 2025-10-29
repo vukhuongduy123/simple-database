@@ -10,6 +10,7 @@ const (
 	TypeRecord           byte = 100
 	TypeDeletedRecord    byte = 101
 	TypeWALEntry         byte = 20
+	TypePage             byte = 255
 )
 
 const (

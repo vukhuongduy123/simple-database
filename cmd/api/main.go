@@ -58,9 +58,7 @@ func main() {
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 
 	start = time.Now()
-	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(5),
-	})
+	resultSet, err := db.Tables["users"].Select(nil)
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 

@@ -3,7 +3,7 @@ package parser
 import (
 	"errors"
 	"fmt"
-	io2 "io"
+	stdio "io"
 	"os"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/io"
@@ -47,7 +47,7 @@ func (r *RecordParser) skipDeletedRecords() error {
 	for {
 		t, err := r.reader.ReadByte()
 		if err != nil {
-			if err == io2.EOF {
+			if err == stdio.EOF {
 				return err
 			}
 			return fmt.Errorf("RecordParser.Parse: %w", err)
@@ -57,7 +57,7 @@ func (r *RecordParser) skipDeletedRecords() error {
 			if err != nil {
 				return fmt.Errorf("RecordParser.Parse: %w", err)
 			}
-			if _, err = r.file.Seek(int64(l), io2.SeekCurrent); err != nil {
+			if _, err = r.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
 				return fmt.Errorf("RecordParser.Parse: %w", err)
 			}
 		}
@@ -75,24 +75,30 @@ func (r *RecordParser) Parse() error {
 
 	t, err := read.ReadByte()
 	if err != nil {
-		if err == io2.EOF {
+		if err == stdio.EOF {
 			return err
 		}
 		return fmt.Errorf("RecordParser.Parse: %w", err)
 	}
+
+	if t == datatype.TypePage {
+		// length of page which is not important
+		_, err = read.ReadUint32()
+		// type of next "thing"
+		t, err = read.ReadByte()
+	}
+
 	if t != datatype.TypeRecord && t != datatype.TypeDeletedRecord {
-		return fmt.Errorf(
-			"RecordParser.Parse: file offset needs to point at a record definition",
-		)
+		return fmt.Errorf("RecordParser.Parse: file offset needs to point at a record definition")
 	}
 
 	if t == datatype.TypeDeletedRecord {
-		if _, err := r.file.Seek(-1*datatype.LenByte, io2.SeekCurrent); err != nil {
+		if _, err := r.file.Seek(-1*datatype.LenByte, stdio.SeekCurrent); err != nil {
 			return fmt.Errorf("RecordParser.Parse: %w", err)
 		}
 		err = r.skipDeletedRecords()
 		if err != nil {
-			if err == io2.EOF {
+			if err == stdio.EOF {
 				return err
 			}
 			return fmt.Errorf("RecordParser.Parse: %w", err)
@@ -108,7 +114,7 @@ func (r *RecordParser) Parse() error {
 	for i := 0; i < len(r.columns); i++ {
 		tlvParser := parser.NewTLVParser(read)
 		value, err := tlvParser.Parse()
-		if errors.Is(err, io2.EOF) {
+		if errors.Is(err, stdio.EOF) {
 			r.Value = NewRawRecord(recordLength, record)
 			return nil
 		}

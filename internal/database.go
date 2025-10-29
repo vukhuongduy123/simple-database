@@ -108,7 +108,7 @@ func (db *Database) readTables() (Tables, error) {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
 		f, err := os.OpenFile(
-			filepath.Join(db.path, v.Name()), os.O_APPEND|os.O_RDWR, 0777,
+			filepath.Join(db.path, v.Name()), os.O_RDWR, 0777,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
