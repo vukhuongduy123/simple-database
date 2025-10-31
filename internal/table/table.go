@@ -16,6 +16,7 @@ import (
 	"simple-database/internal/table/column/io"
 	platformparser "simple-database/internal/table/column/parser"
 	"simple-database/internal/table/index"
+	indexparser "simple-database/internal/table/index/parser"
 	"simple-database/internal/table/wal"
 	walparser "simple-database/internal/table/wal/parser"
 	"slices"
@@ -36,6 +37,7 @@ type Table struct {
 	columnDefReader *io.ColumnDefinitionReader
 	recordParser    *platformparser.RecordParser
 	wal             *wal.WAL
+	index           *index.Index
 }
 
 type DeletableRecord struct {
@@ -66,7 +68,7 @@ func (t *Table) WriteColumnDefinitions() error {
 }
 
 func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser,
-	wal *wal.WAL) (*Table, error) {
+	wal *wal.WAL, index *index.Index) (*Table, error) {
 	if f == nil || reader == nil || columnDefReader == nil {
 		return nil, fmt.Errorf("NewTable: nil argument")
 	}
@@ -82,12 +84,13 @@ func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefiniti
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
 		wal:             wal,
+		index:           index,
 	}
 	return t, nil
 }
 
 func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r *io3.Reader,
-	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL) (*Table, error) {
+	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL, index *index.Index) (*Table, error) {
 	return &Table{
 		file:            file,
 		ColumnNames:     columnNames,
@@ -96,6 +99,7 @@ func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
 		wal:             wal,
+		index:           index,
 	}, nil
 }
 
@@ -178,8 +182,12 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	_, err = t.insertIntoPage(buf)
+	page, err := t.insertIntoPage(buf)
 	if err != nil {
+		return 0, fmt.Errorf("Table.Insert: %w", err)
+	}
+
+	if err = t.index.AddAndPersist(record["id"].(int64), page.StartPos); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
@@ -203,6 +211,17 @@ func (t *Table) validateColumns(record map[string]any) error {
 	return nil
 }
 
+func (t *Table) getPrimaryKeyColumnName() string {
+	var primaryKeyColumnName string
+	for _, col := range t.columns {
+		if col.IsPrimaryKey {
+			return string(col.Name[:])
+		}
+	}
+
+	return primaryKeyColumnName
+}
+
 func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interface{}, error) {
 	if err := t.ensureFilePointer(); err != nil {
 		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
@@ -211,6 +230,38 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
 	results := make([]map[string]interface{}, 0)
+	fields := make([]string, 0)
+	for k := range whereClause {
+		fields = append(fields, k)
+	}
+
+	singleResult := false
+	primaryKeyName := t.getPrimaryKeyColumnName()
+
+	if slices.Contains(fields, primaryKeyName) {
+		item, err := t.index.Get(whereClause[primaryKeyName].(int64))
+		singleResult = true
+
+		if err == nil {
+			if _, err = t.file.Seek(item.PagePos, stdio.SeekStart); err != nil {
+				return nil, fmt.Errorf("Table.Select: %w", err)
+			}
+			pr := indexparser.NewPageReader(t.reader)
+			pageContent := make([]byte, PageSize+datatype.LenMeta)
+
+			n, err := pr.Read(pageContent)
+			if err != nil {
+				return nil, fmt.Errorf("Table.Select: %w", err)
+			}
+
+			pageContent = pageContent[:n]
+			reader := bytes.NewReader(pageContent)
+			t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
+		}
+	}
+	defer func() {
+		t.recordParser = platformparser.NewRecordParser(t.file, t.ColumnNames)
+	}()
 
 	for {
 		err := t.recordParser.Parse()
@@ -230,6 +281,10 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 		}
 
 		results = append(results, rawRecord.Record)
+
+		if singleResult {
+			return results, nil
+		}
 	}
 }
 

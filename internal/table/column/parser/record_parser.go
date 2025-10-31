@@ -4,14 +4,13 @@ import (
 	"errors"
 	"fmt"
 	stdio "io"
-	"os"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/io"
 	"simple-database/internal/platform/parser"
 )
 
 type RecordParser struct {
-	file    *os.File
+	file    stdio.ReadSeeker
 	columns []string
 	Value   *RawRecord
 	reader  *io.Reader
@@ -28,7 +27,7 @@ type RawRecord struct {
 	Record map[string]interface{}
 }
 
-func NewRecordParser(f *os.File, columns []string) *RecordParser {
+func NewRecordParser(f stdio.ReadSeeker, columns []string) *RecordParser {
 	return &RecordParser{
 		file:    f,
 		columns: columns,

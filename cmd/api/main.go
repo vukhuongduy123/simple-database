@@ -42,7 +42,7 @@ func main() {
 	}
 
 	start := time.Now()
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 1_000_000; i++ {
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
@@ -58,7 +58,9 @@ func main() {
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 
 	start = time.Now()
-	resultSet, err := db.Tables["users"].Select(nil)
+	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
+		"id": int64(1),
+	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 

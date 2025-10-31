@@ -10,6 +10,7 @@ import (
 	"simple-database/internal/table"
 	"simple-database/internal/table/column/io"
 	"simple-database/internal/table/column/parser"
+	"simple-database/internal/table/index"
 	"simple-database/internal/table/wal"
 	"strings"
 )
@@ -59,11 +60,11 @@ func NewDatabase(name string) (*Database, error) {
 }
 
 func (db *Database) CreateTable(name string, columnNames []string, columns table.Columns) (*table.Table, error) {
-	path := filepath.Join(path(db.name), name) + table.FileExtension
-	if _, err := os.Open(path); err == nil {
+	dbPath := filepath.Join(path(db.name), name) + table.FileExtension
+	if _, err := os.Open(dbPath); err == nil {
 		return nil, errors.NewTableAlreadyExistsError(name)
 	}
-	f, err := os.Create(path)
+	f, err := os.Create(dbPath)
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -78,7 +79,13 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
 
-	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f, columnNames), walFile)
+	idxFile, err := os.OpenFile(filepath.Join(path(db.name), name)+"_idx.bin", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0777)
+	if err != nil {
+		return nil, fmt.Errorf("Database.readTables: %w", err)
+	}
+
+	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f,
+		columnNames), walFile, index.NewIndex(idxFile))
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -100,7 +107,7 @@ func (db *Database) readTables() (Tables, error) {
 	tables := make([]*table.Table, 0)
 
 	for _, v := range tablePaths {
-		if strings.Contains(v.Name(), "_wal") {
+		if strings.Contains(v.Name(), "_wal") || strings.Contains(v.Name(), "_idx") {
 			continue
 		}
 
@@ -126,7 +133,12 @@ func (db *Database) readTables() (Tables, error) {
 			return nil, errors.NewCannotCreateTableError(err, v.Name())
 		}
 
-		t, err := table.NewTable(f, r, columnDefReader, nil, walFile)
+		idxFile, err := os.OpenFile(filepath.Join(path(db.name), tableName)+"_idx.bin", os.O_RDWR|os.O_CREATE, 0777)
+		if err != nil {
+			return nil, fmt.Errorf("Database.readTables: %w", err)
+		}
+
+		t, err := table.NewTable(f, r, columnDefReader, nil, walFile, index.NewIndex(idxFile))
 		if err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}

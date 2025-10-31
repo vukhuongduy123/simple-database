@@ -172,3 +172,15 @@ func (e *StackError) Error() string {
 func (e *InvalidFilename) Error() string {
 	return fmt.Sprintf("invalid filename: %s", e.filename)
 }
+
+type ItemNotFoundError struct {
+	id int64
+}
+
+func NewItemNotFoundError(id int64) *ItemNotFoundError {
+	return &ItemNotFoundError{id: id}
+}
+
+func (e *ItemNotFoundError) Error() string {
+	return fmt.Sprintf("item with ID %d not found in index", e.id)
+}
