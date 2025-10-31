@@ -79,10 +79,7 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
 
-	idxFile, err := os.OpenFile(filepath.Join(path(db.name), name)+"_idx.bin", os.O_APPEND|os.O_RDWR|os.O_CREATE, 0777)
-	if err != nil {
-		return nil, fmt.Errorf("Database.readTables: %w", err)
-	}
+	idxFile := filepath.Join(path(db.name), name) + "_idx.bin"
 
 	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f,
 		columnNames), walFile, index.NewIndex(idxFile))
@@ -133,10 +130,7 @@ func (db *Database) readTables() (Tables, error) {
 			return nil, errors.NewCannotCreateTableError(err, v.Name())
 		}
 
-		idxFile, err := os.OpenFile(filepath.Join(path(db.name), tableName)+"_idx.bin", os.O_RDWR|os.O_CREATE, 0777)
-		if err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
-		}
+		idxFile := filepath.Join(path(db.name), tableName) + "_idx.bin"
 
 		t, err := table.NewTable(f, r, columnDefReader, nil, walFile, index.NewIndex(idxFile))
 		if err != nil {

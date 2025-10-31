@@ -4,18 +4,16 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"io"
 	"os"
 	"simple-database/internal/platform/datatype"
 	errors "simple-database/internal/platform/error"
 	platformparser "simple-database/internal/platform/parser"
 
-	"github.com/google/btree"
+	"github.com/guycipher/btree"
 )
 
 type Index struct {
-	btree *btree.BTreeG[Item]
-	file  *os.File
+	btree *btree.BTree
 }
 
 // Item TODO: support for multiple types
@@ -31,52 +29,10 @@ func NewItem(val, pagePos int64) *Item {
 	}
 }
 
-func NewIndex(f *os.File) *Index {
-	bt := btree.NewG[Item](2, func(a, b Item) bool {
-		return a.val < b.val
-	})
-	return &Index{
-		btree: bt,
-		file:  f,
-	}
-}
+func NewIndex(f string) *Index {
+	bt, _ := btree.Open(f, os.O_CREATE|os.O_RDWR, 0644, 3)
 
-func (i *Index) MarshalBinary() ([]byte, error) {
-	buf := bytes.Buffer{}
-
-	// type
-	if err := binary.Write(&buf, binary.LittleEndian, datatype.TypeIndex); err != nil {
-		return nil, fmt.Errorf("index.MarshalBinary: type: %w", err)
-	}
-
-	// length
-	item := Item{}
-	itemsLen := uint32(i.btree.Len()) * (item.TLVLength() + datatype.LenMeta)
-	if err := binary.Write(&buf, binary.LittleEndian, itemsLen); err != nil {
-		return nil, fmt.Errorf("index.MarshalBinary: len: %w", err)
-	}
-
-	for _, v := range i.GetAll() {
-		data, err := v.MarshalBinary()
-		if err != nil {
-			return nil, fmt.Errorf("index.MarshalBinary: value: %w", err)
-		}
-		buf.Write(data)
-	}
-	return buf.Bytes(), nil
-}
-
-func (i *Index) GetAll() []Item {
-	out := make([]Item, 0)
-	i.btree.Ascend(func(a Item) bool {
-		out = append(out, a)
-		return true
-	})
-	return out
-}
-
-func (i *Item) TLVLength() uint32 {
-	return uint32(2*datatype.LenInt64 + 2*datatype.LenMeta)
+	return &Index{btree: bt}
 }
 
 func (i *Item) MarshalBinary() ([]byte, error) {
@@ -86,15 +42,16 @@ func (i *Item) MarshalBinary() ([]byte, error) {
 		return nil, fmt.Errorf("Item.MarshalBinary: type: %w", err)
 	}
 	// len
-	if err := binary.Write(&buf, binary.LittleEndian, i.TLVLength()); err != nil {
+	if err := binary.Write(&buf, binary.LittleEndian, uint32(2*(datatype.LenInt64+datatype.LenMeta))); err != nil {
 		return nil, fmt.Errorf("Item.MarshalBinary: len: %w", err)
 	}
-	idTLV := platformparser.NewTLVMarshaler(i.val)
-	idBuf, err := idTLV.MarshalBinary()
+
+	valTLV := platformparser.NewTLVMarshaler(i.val)
+	valBuf, err := valTLV.MarshalBinary()
 	if err != nil {
 		return nil, fmt.Errorf("Item.MarshalBinary: ID TLV: %w", err)
 	}
-	buf.Write(idBuf)
+	buf.Write(valBuf)
 
 	pagePosTLV := platformparser.NewTLVMarshaler(i.PagePos)
 	pagePosBuf, err := pagePosTLV.MarshalBinary()
@@ -103,113 +60,80 @@ func (i *Item) MarshalBinary() ([]byte, error) {
 	}
 	buf.Write(pagePosBuf)
 	return buf.Bytes(), nil
-
 }
 
-func (i *Index) persist() error {
-	if err := i.file.Truncate(0); err != nil {
-		return fmt.Errorf("index.persist: file.Truncate: %w", err)
-	}
-	if _, err := i.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("index.persist: file.Seek: %w", err)
-	}
-	b, err := i.MarshalBinary()
-	if err != nil {
-		return fmt.Errorf("index.persist: marshalBinary: %w", err)
-	}
-	n, err := i.file.Write(b)
-	if err != nil {
-		return fmt.Errorf("index.persist: file.Write: %w", err)
-	}
-	if n != len(b) {
-		return errors.NewIncompleteWriteError(len(b), n)
-	}
-	return nil
-}
-
-func (i *Index) AddAndPersist(id, pagePos int64) error {
-	i.btree.ReplaceOrInsert(*NewItem(id, pagePos))
-	return i.persist()
-}
-
-func (i *Index) UnmarshalBinary(data []byte) error {
+func (i *Item) UnmarshalBinary(buf []byte) error {
 	byteUnmarshaler := platformparser.NewValueUnmarshaler[byte]()
 	int32Unmarshaler := platformparser.NewValueUnmarshaler[uint32]()
 	int64Unmarshaler := platformparser.NewValueUnmarshaler[int64]()
 
 	n := 0
+
 	// type
-	if err := byteUnmarshaler.UnmarshalBinary(data); err != nil {
-		return fmt.Errorf("index.UnmarshalBinary: type: %w", err)
+	if err := byteUnmarshaler.UnmarshalBinary(buf); err != nil {
+		return fmt.Errorf("Item.MarshalBinary: type: %w", err)
 	}
-	n++
+	n += datatype.LenByte
+
 	// len
-	if err := int32Unmarshaler.UnmarshalBinary(data[n:]); err != nil {
-		return fmt.Errorf("index.UnmarshalBinary: len: %w", err)
+	if err := int32Unmarshaler.UnmarshalBinary(buf[n:]); err != nil {
+		return fmt.Errorf("Item.MarshalBinary: len: %w", err)
 	}
-	n += datatype.LenInt32
+	n += int(uint32(2 * (datatype.LenInt64 + datatype.LenMeta)))
 
-	for {
-		// type of index item
-		if err := byteUnmarshaler.UnmarshalBinary(data[n:]); err != nil {
-			if err == io.EOF {
-				return nil
-			}
-			return fmt.Errorf("index.UnmarshalBinary: ID type: %w", err)
-		}
-		n++
-		// len of index item
-		if err := int32Unmarshaler.UnmarshalBinary(data[n:]); err != nil {
-			return fmt.Errorf("index.UnmarshalBinary: ID len: %w", err)
-		}
-		n += datatype.LenInt32
-
-		idTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
-		if err := idTLV.UnmarshalBinary(data[n:]); err != nil {
-			return fmt.Errorf("index.UnmarshalBinary: ID TLV: %w", err)
-		}
-		n += int(idTLV.BytesRead)
-		id := idTLV.Value
-
-		pagePosTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
-		if err := pagePosTLV.UnmarshalBinary(data[n:]); err != nil {
-			return fmt.Errorf("index.UnmarshalBinary: page pos: %w", err)
-		}
-		n += int(pagePosTLV.BytesRead)
-		pagePos := pagePosTLV.Value
-		i.Add(id, pagePos)
+	valTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
+	if err := valTLV.UnmarshalBinary(buf[n:]); err != nil {
+		return fmt.Errorf("Item.MarshalBinary: val: %w", err)
 	}
-}
-func (i *Index) Add(id, pagePos int64) {
-	i.btree.ReplaceOrInsert(*NewItem(id, pagePos))
+
+	i.val = valTLV.Value
+	n += int(valTLV.BytesRead)
+
+	pagePosTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
+	if err := pagePosTLV.UnmarshalBinary(buf[n:]); err != nil {
+		return fmt.Errorf("Item.MarshalBinary: page pos: %w", err)
+	}
+	i.PagePos = pagePosTLV.Value
+	n += int(pagePosTLV.BytesRead)
+
+	return nil
 }
 
-func (i *Index) Load() error {
-	if _, err := i.file.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("index.Load: file.Seek: %w", err)
-	}
-	stat, err := i.file.Stat()
+func (i *Index) Add(id, pagePos int64) error {
+	itemBuf, err := NewItem(id, pagePos).MarshalBinary()
 	if err != nil {
-		return fmt.Errorf("index.Load: file.Stat: %w", err)
+		return fmt.Errorf("index.Add: %w", err)
 	}
-	b := make([]byte, stat.Size())
-	n, err := i.file.Read(b)
+	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
+	idBuf, err := int64Marshaler.MarshalBinary()
 	if err != nil {
-		return fmt.Errorf("index.Load: file.Read: %w", err)
+		return fmt.Errorf("index.Add: %w", err)
 	}
-	if n != len(b) {
-		return errors.NewIncompleteReadError(len(b), n)
-	}
-	if err = i.UnmarshalBinary(b); err != nil {
-		return fmt.Errorf("index.Load: UnmarshalBinary: %w", err)
+
+	err = i.btree.Put(idBuf, itemBuf)
+	if err != nil {
+		return fmt.Errorf("index.Add: %w", err)
 	}
 	return nil
 }
 
 func (i *Index) Get(val int64) (Item, error) {
-	item, ok := i.btree.Get(Item{val: val})
-	if !ok {
+	int64Marshaler := platformparser.NewValueMarshaler[int64](val)
+	valBuf, err := int64Marshaler.MarshalBinary()
+	if err != nil {
+		return Item{}, fmt.Errorf("index.Add: %w", err)
+	}
+
+	key, err := i.btree.Get(valBuf)
+	if err != nil {
 		return Item{}, errors.NewItemNotFoundError(val)
 	}
+	item := Item{}
+	// for now only support return one item
+	err = item.UnmarshalBinary(key.V[0])
+	if err != nil {
+		return Item{}, fmt.Errorf("index.Add: %w", err)
+	}
+
 	return item, nil
 }

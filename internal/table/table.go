@@ -187,7 +187,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	if err = t.index.AddAndPersist(record["id"].(int64), page.StartPos); err != nil {
+	if err = t.index.Add(record["id"].(int64), page.StartPos); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
