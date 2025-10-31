@@ -215,7 +215,7 @@ func (t *Table) getPrimaryKeyColumnName() string {
 	var primaryKeyColumnName string
 	for _, col := range t.columns {
 		if col.IsPrimaryKey {
-			return string(col.Name[:])
+			return helper.ToString(col.Name[:])
 		}
 	}
 
@@ -773,6 +773,17 @@ func (t *Table) removeEmptyPage(page int64) (e error) {
 
 	if err = t.file.Truncate(int64(bw + aw)); err != nil {
 		return fmt.Errorf("Table.removeEmptyPage: %w", err)
+	}
+	return nil
+}
+
+// Close closes the table and the index files
+func (t *Table) Close() error {
+	if err := t.file.Close(); err != nil {
+		return fmt.Errorf("Table.Close: %w", err)
+	}
+	if err := t.index.Close(); err != nil {
+		return fmt.Errorf("Table.Close: %w", err)
 	}
 	return nil
 }

@@ -137,3 +137,7 @@ func (i *Index) Get(val int64) (Item, error) {
 
 	return item, nil
 }
+
+func (i *Index) Close() error {
+	return i.btree.Close()
+}

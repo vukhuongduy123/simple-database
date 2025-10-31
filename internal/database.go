@@ -182,3 +182,13 @@ func validateColumnsConstraint(columns table.Columns) error {
 
 	return nil
 }
+
+func (db *Database) Close() error {
+	var e error
+	for _, t := range db.Tables {
+		if err := t.Close(); err != nil {
+			e = err
+		}
+	}
+	return e
+}

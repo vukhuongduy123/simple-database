@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"reflect"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
@@ -41,27 +40,26 @@ func main() {
 		log.Fatal(err)
 	}
 
-	start := time.Now()
-	for i := 0; i < 1_000_000; i++ {
+	for i := 0; i < 100_000; i++ {
+		start := time.Now()
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
-				"username": "This is a user",
+				"username": "This is a user " + fmt.Sprint(i),
 			},
 		)
 		if err != nil {
 			fmt.Println(err)
 		}
+		elapsed := time.Since(start)
+		fmt.Printf("Time elapsed: %s\n", elapsed)
 	}
 
-	elapsed := time.Since(start)
-	fmt.Printf("Time elapsed: %s\n", elapsed)
-
-	start = time.Now()
+	start := time.Now()
 	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(1),
+		"id": int64(5),
 	})
-	elapsed = time.Since(start)
+	elapsed := time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 
 	if err != nil && err != io.EOF {
@@ -70,5 +68,19 @@ func main() {
 	}
 
 	fmt.Println(resultSet)
-	fmt.Println(reflect.TypeOf(resultSet[0]))
+
+	start = time.Now()
+	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
+		"username": "This is a user 5000",
+	})
+	elapsed = time.Since(start)
+	fmt.Printf("Time elapsed: %s\n", elapsed)
+	fmt.Println(resultSet)
+
+	defer func(db *internal.Database) {
+		err := db.Close()
+		if err != nil {
+
+		}
+	}(db)
 }
