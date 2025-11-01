@@ -79,7 +79,7 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 	if err := int32Unmarshaler.UnmarshalBinary(buf[n:]); err != nil {
 		return fmt.Errorf("Item.MarshalBinary: len: %w", err)
 	}
-	n += int(uint32(2 * (datatype.LenInt64 + datatype.LenMeta)))
+	n += datatype.LenInt32
 
 	valTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
 	if err := valTLV.UnmarshalBinary(buf[n:]); err != nil {
@@ -140,4 +140,19 @@ func (i *Index) Get(val int64) (Item, error) {
 
 func (i *Index) Close() error {
 	return i.btree.Close()
+}
+
+func (i *Index) RemoveAll(ids []int64) error {
+	for _, id := range ids {
+		int64Marshaler := platformparser.NewValueMarshaler[int64](id)
+		idBuf, err := int64Marshaler.MarshalBinary()
+		if err != nil {
+			return fmt.Errorf("index.Add: %w", err)
+		}
+		err = i.btree.Delete(idBuf)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

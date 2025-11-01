@@ -52,12 +52,12 @@ func main() {
 			fmt.Println(err)
 		}
 		elapsed := time.Since(start)
-		fmt.Printf("Time elapsed: %s\n", elapsed)
+		fmt.Printf("Time elapsed %d: %s\n", i, elapsed)
 	}
 
 	start := time.Now()
 	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(5),
+		"id": int64(51234),
 	})
 	elapsed := time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
@@ -71,7 +71,7 @@ func main() {
 
 	start = time.Now()
 	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
-		"username": "This is a user 5000",
+		"username": "This is a user 51234",
 	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)

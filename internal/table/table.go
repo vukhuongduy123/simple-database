@@ -26,7 +26,9 @@ import (
 type Columns map[string]*column.Column
 
 const FileExtension = ".bin"
-const PageSize = 128
+const PageSize = 4096
+
+var lastPagePos int64 = -1
 
 type Table struct {
 	Name            string
@@ -41,6 +43,7 @@ type Table struct {
 }
 
 type DeletableRecord struct {
+	id     int64
 	offset int64
 	len    uint32
 }
@@ -239,7 +242,8 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 	primaryKeyName := t.getPrimaryKeyColumnName()
 
 	if slices.Contains(fields, primaryKeyName) {
-		item, err := t.index.Get(whereClause[primaryKeyName].(int64))
+		id := whereClause[primaryKeyName].(int64)
+		item, err := t.index.Get(id)
 		singleResult = true
 
 		if err == nil {
@@ -427,32 +431,35 @@ func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int
 	return len(deletableRecords), nil
 }
 
-func newDeletableRecord(offset int64, len uint32) *DeletableRecord {
+func newDeletableRecord(id int64, offset int64, len uint32) *DeletableRecord {
 	return &DeletableRecord{
+		id:     id,
 		offset: offset,
 		len:    len,
 	}
 }
 
-func (t *Table) Delete(whereClause map[string]interface{}) (int, error) {
+func (t *Table) Delete(whereClause map[string]interface{}) ([]*platformparser.RawRecord, error) {
 	if err := t.ensureFilePointer(); err != nil {
-		return 0, fmt.Errorf("Table.Delete: %w", err)
+		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 	if err := t.validateWhereClause(whereClause); err != nil {
-		return 0, fmt.Errorf("Table.Delete: %w", err)
+		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 	deletableRecords := make([]*DeletableRecord, 0)
+	rawRecords := make([]*platformparser.RawRecord, 0)
+	primaryKeyName := t.getPrimaryKeyColumnName()
 	for {
 		if err := t.recordParser.Parse(); err != nil {
 			if err == stdio.EOF {
 				break
 			}
-			return 0, fmt.Errorf("Table.Delete: %w", err)
+			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
 
 		rawRecord := t.recordParser.Value
 		if err := t.ensureColumnLength(rawRecord.Record); err != nil {
-			return 0, fmt.Errorf("Table.Delete: %w", err)
+			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
 		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
 			continue
@@ -460,64 +467,50 @@ func (t *Table) Delete(whereClause map[string]interface{}) (int, error) {
 
 		pos, err := t.file.Seek(0, stdio.SeekCurrent)
 		if err != nil {
-			return 0, fmt.Errorf("Table.Delete: %w", err)
+			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
 
-		deletableRecords = append(deletableRecords, newDeletableRecord(pos-int64(rawRecord.FullSize), rawRecord.FullSize))
+		deletableRecord := newDeletableRecord(rawRecord.Record[primaryKeyName].(int64), pos-int64(rawRecord.FullSize), rawRecord.FullSize)
+		deletableRecords = append(deletableRecords, deletableRecord)
+		rawRecords = append(rawRecords, rawRecord)
 	}
-	return t.markRecordsAsDeleted(deletableRecords)
+	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
+		return nil, fmt.Errorf("table.delete: %w", err)
+	}
+
+	ids := make([]int64, len(deletableRecords))
+	for _, v := range deletableRecords {
+		ids = append(ids, v.id)
+	}
+	if err := t.index.RemoveAll(ids); err != nil {
+		return nil, fmt.Errorf("table.delete: %w", err)
+	}
+	return rawRecords, nil
 }
 
 func (t *Table) Update(whereClause map[string]interface{}, values map[string]interface{}) (int, error) {
-	if err := t.validateColumns(values); err != nil {
-		return 0, fmt.Errorf("Table.Update: %w", err)
-	}
 	if err := t.ensureFilePointer(); err != nil {
 		return 0, fmt.Errorf("Table.Update: %w", err)
 	}
-
-	deletableRecords := make([]*DeletableRecord, 0)
-	rawRecords := make([]*platformparser.RawRecord, 0)
-	for {
-		err := t.recordParser.Parse()
-		if err == stdio.EOF {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("Table.Update: %w", err)
-		}
-		rawRecord := t.recordParser.Value
-
-		if err := t.ensureColumnLength(rawRecord.Record); err != nil {
-			return 0, fmt.Errorf("Table.Update: %w", err)
-		}
-
-		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
-			continue
-		}
-
-		rawRecords = append(rawRecords, rawRecord)
-		pos, err := t.file.Seek(0, stdio.SeekCurrent)
-		if err != nil {
-			return 0, fmt.Errorf("Table.Update: %w", err)
-		}
-		deletableRecords = append(deletableRecords, newDeletableRecord(pos-int64(rawRecord.FullSize), rawRecord.FullSize))
+	if err := t.validateColumns(values); err != nil {
+		return 0, fmt.Errorf("Table.Update: %w", err)
 	}
 
-	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
-		return 0, fmt.Errorf("Table.Update: %w", err)
+	rawRecords, err := t.Delete(whereClause)
+	if err != nil {
+		return 0, fmt.Errorf("table.Update: %w", err)
 	}
 
 	for _, rawRecord := range rawRecords {
 		updatedRecord := make(map[string]interface{})
-		for col, v := range rawRecord.Record {
-			if updatedVal, ok := values[col]; ok {
-				updatedRecord[col] = updatedVal
+		for k, v := range rawRecord.Record {
+			if updatedVal, ok := values[k]; ok {
+				updatedRecord[k] = updatedVal
 			} else {
-				updatedRecord[col] = v
+				updatedRecord[k] = v
 			}
 		}
-		if _, err := t.Insert(updatedRecord); err != nil {
+		if _, err = t.Insert(updatedRecord); err != nil {
 			return 0, fmt.Errorf("Table.Update: %w", err)
 		}
 	}
@@ -571,13 +564,24 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 	}
 
 	for {
-		err = t.seekUntil(datatype.TypePage)
-		if err != nil {
-			if err == stdio.EOF {
-				return t.insertEmptyPage()
-			}
+		if lastPagePos == -1 {
+			err = t.seekUntil(datatype.TypePage)
+			if err != nil {
+				if err == stdio.EOF {
+					page, err := t.insertEmptyPage()
+					lastPagePos = page.StartPos
+					return page, err
+				}
 
-			return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+				return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+			} else {
+				lastPagePos, err = t.file.Seek(0, stdio.SeekCurrent)
+			}
+		} else {
+			_, err = t.file.Seek(lastPagePos, stdio.SeekStart)
+			if err != nil {
+				return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+			}
 		}
 
 		// Skipping the type definition byte
@@ -597,7 +601,19 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 			}
 
 			_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
+			lastPagePos = pagePos
 			return index.NewPage(pagePos), err
+		} else {
+			fmt.Printf("Table.seekToNextPage: page full. Adding new page\n")
+			_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
+			if err != nil {
+				return nil, fmt.Errorf("Table.seekToNextPage: file.Seek: %w", err)
+			}
+			page, err := t.insertEmptyPage()
+			if err != nil {
+				return nil, fmt.Errorf("Table.seekToNextPage: %w", err)
+			}
+			lastPagePos = page.StartPos
 		}
 	}
 

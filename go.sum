@@ -1,6 +1,8 @@
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/guycipher/btree v1.3.2 h1:aovIPO7Yxl2ddAMaSXmya4sNin/N9RfV8HrSLnLKBbU=
-github.com/guycipher/btree v1.3.2/go.mod h1:ItiWfkEowLd82Y8Znvtk9oCWVHV9r5J2Kb7t2MoYcm4=
+github.com/guycipher/btree v1.3.1 h1:su27OkZYBXkdy23q+uxrMx5afIsCxQ9lJmGn7cY1BPI=
+github.com/guycipher/btree v1.3.1/go.mod h1:ItiWfkEowLd82Y8Znvtk9oCWVHV9r5J2Kb7t2MoYcm4=
+github.com/guycipher/btree v1.3.3-0.20250908083314-7407ab9a8859 h1:FOCLHA1c9f7PpeeC41RR0uYYUvnAcPieOwysVgRvZUo=
+github.com/guycipher/btree v1.3.3-0.20250908083314-7407ab9a8859/go.mod h1:ItiWfkEowLd82Y8Znvtk9oCWVHV9r5J2Kb7t2MoYcm4=
 github.com/hashicorp/go-msgpack v0.5.5 h1:i9R9JSrqIz0QVLz3sz+i3YJdT7TTSLcfLLzJi9aZTuI=
 github.com/hashicorp/go-msgpack v0.5.5/go.mod h1:ahLV/dePpqEmjfWmKiqvPkv/twdG7iPBM1vqhUKIvfM=
