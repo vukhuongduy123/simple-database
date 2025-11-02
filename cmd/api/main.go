@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
+	"runtime/pprof"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
@@ -11,6 +13,20 @@ import (
 )
 
 func main() {
+	_ = os.RemoveAll("data")
+	_ = os.Remove("cpu.prof")
+	f, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", err)
+	}
+	_ = f.Close()
+
+	// Start CPU profiling
+	if err := pprof.StartCPUProfile(f); err != nil {
+		log.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
@@ -40,7 +56,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for i := 0; i < 100_000; i++ {
+	start := time.Now()
+	for i := 0; i < 10_000_000; i++ {
 		start := time.Now()
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
@@ -54,12 +71,14 @@ func main() {
 		elapsed := time.Since(start)
 		fmt.Printf("Time elapsed %d: %s\n", i, elapsed)
 	}
+	elapsed := time.Since(start)
+	fmt.Printf("Time elapsed running 10M insert: %s\n", elapsed)
 
-	start := time.Now()
+	start = time.Now()
 	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
 		"id": int64(51234),
 	})
-	elapsed := time.Since(start)
+	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 
 	if err != nil && err != io.EOF {
