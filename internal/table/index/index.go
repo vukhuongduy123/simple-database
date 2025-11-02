@@ -110,6 +110,11 @@ func (i *Index) Add(id, pagePos int64) error {
 		return fmt.Errorf("index.Add: %w", err)
 	}
 
+	err = i.btree.Delete(idBuf)
+	if err != nil {
+		return fmt.Errorf("index.Add: %w", err)
+	}
+
 	err = i.btree.Put(idBuf, itemBuf)
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
@@ -142,14 +147,22 @@ func (i *Index) Close() error {
 	return i.btree.Close()
 }
 
+func (i *Index) Remove(id int64) error {
+	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
+	idBuf, err := int64Marshaler.MarshalBinary()
+	if err != nil {
+		return fmt.Errorf("index.Add: %w", err)
+	}
+	err = i.btree.Delete(idBuf)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 func (i *Index) RemoveAll(ids []int64) error {
 	for _, id := range ids {
-		int64Marshaler := platformparser.NewValueMarshaler[int64](id)
-		idBuf, err := int64Marshaler.MarshalBinary()
-		if err != nil {
-			return fmt.Errorf("index.Add: %w", err)
-		}
-		err = i.btree.Delete(idBuf)
+		err := i.Remove(id)
 		if err != nil {
 			return err
 		}
