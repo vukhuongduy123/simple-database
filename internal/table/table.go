@@ -3,12 +3,15 @@ package table
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	stdio "io"
+	"log"
 	"os"
 	"path/filepath"
+	"simple-database/internal/platform"
 	"simple-database/internal/platform/datatype"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
 	io3 "simple-database/internal/platform/io"
 	"simple-database/internal/platform/parser"
@@ -40,12 +43,34 @@ type Table struct {
 	recordParser    *platformparser.RecordParser
 	wal             *wal.WAL
 	index           *index.Index
+	lru             *platform.LRU[string, index.Page]
+}
+
+type SelectResult struct {
+	Rows          []map[string]interface{}
+	AccessType    string
+	RowsInspected int
+	Extra         string
+}
+type DeleteResult struct {
+	DeletedRecords []*platformparser.RawRecord
+	AffectedPages  []*index.Page
 }
 
 type DeletableRecord struct {
 	id     int64
 	offset int64
 	len    uint32
+}
+
+const AccessTypeAll = "All"
+const AccessTypeIndex = "Index"
+
+func newSelectResult() *SelectResult {
+	return &SelectResult{
+		AccessType: AccessTypeAll,
+		Extra:      "Not using page cache",
+	}
 }
 
 func (t *Table) SetRecordParser(recParser *platformparser.RecordParser) error {
@@ -71,7 +96,7 @@ func (t *Table) WriteColumnDefinitions() error {
 }
 
 func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser,
-	wal *wal.WAL, index *index.Index) (*Table, error) {
+	wal *wal.WAL, idx *index.Index) (*Table, error) {
 	if f == nil || reader == nil || columnDefReader == nil {
 		return nil, fmt.Errorf("NewTable: nil argument")
 	}
@@ -87,13 +112,14 @@ func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefiniti
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
 		wal:             wal,
-		index:           index,
+		index:           idx,
+		lru:             platform.NewLRU[string, index.Page](10, func(a, b string) bool { return a == b }),
 	}
 	return t, nil
 }
 
 func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r *io3.Reader,
-	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL, index *index.Index) (*Table, error) {
+	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL, idx *index.Index) (*Table, error) {
 	return &Table{
 		file:            file,
 		ColumnNames:     columnNames,
@@ -102,7 +128,8 @@ func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r
 		columnDefReader: columnDefReader,
 		recordParser:    parser,
 		wal:             wal,
-		index:           index,
+		index:           idx,
+		lru:             platform.NewLRU[string, index.Page](10, func(a, b string) bool { return a == b }),
 	}, nil
 }
 
@@ -144,7 +171,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	for _, col := range t.ColumnNames {
 		val, ok := record[col]
 		if !ok {
-			return 0, errors.WrapError(fmt.Errorf("Table.Insert: missing column: %s", col))
+			return 0, platformerror.WrapError(fmt.Errorf("Table.Insert: missing column: %s", col))
 		}
 		tlvMarshaler := parser.NewTLVMarshaler(val)
 		length, err := tlvMarshaler.TLVLength()
@@ -194,6 +221,10 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
+	if err = t.invalidateCache(page); err != nil {
+		return 0, fmt.Errorf("table.Insert: %w", err)
+	}
+
 	err = t.wal.Commit(walEntry)
 	if err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
@@ -205,10 +236,10 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 func (t *Table) validateColumns(record map[string]any) error {
 	for col, val := range record {
 		if _, ok := t.columns[col]; !ok {
-			return fmt.Errorf("Table.validateColumns: %w", errors.NewUnknownColumnError(col))
+			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewUnknownColumnError(col))
 		}
 		if !t.columns[col].Opts.AllowNull && val == nil {
-			return fmt.Errorf("Table.validateColumns: %w", errors.NewColumnNotNullableError(col))
+			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewColumnNotNullableError(col))
 		}
 	}
 	return nil
@@ -225,14 +256,16 @@ func (t *Table) getPrimaryKeyColumnName() string {
 	return primaryKeyColumnName
 }
 
-func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interface{}, error) {
+func (t *Table) Select(whereClause map[string]interface{}) (*SelectResult, error) {
 	if err := t.ensureFilePointer(); err != nil {
-		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
+		return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
 	if err := t.validateWhereClause(whereClause); err != nil {
-		return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
+		return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
-	results := make([]map[string]interface{}, 0)
+
+	selectResult := newSelectResult()
+
 	fields := make([]string, 0)
 	for k := range whereClause {
 		fields = append(fields, k)
@@ -244,23 +277,42 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 	if slices.Contains(fields, primaryKeyName) {
 		id := whereClause[primaryKeyName].(int64)
 		item, err := t.index.Get(id)
+		if err != nil {
+			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
+		}
+
 		singleResult = true
+		selectResult.AccessType = AccessTypeIndex
+		if _, err = t.file.Seek(item.PagePos, stdio.SeekStart); err != nil {
+			return nil, fmt.Errorf("Table.Select: %w", err)
+		}
 
-		if err == nil {
-			if _, err = t.file.Seek(item.PagePos, stdio.SeekStart); err != nil {
+		key := t.pageKey(item.PagePos)
+		page, err := t.lru.Get(key)
+		if err != nil {
+			if !errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
 				return nil, fmt.Errorf("Table.Select: %w", err)
 			}
-			pr := indexparser.NewPageReader(t.reader)
-			pageContent := make([]byte, PageSize+datatype.LenMeta)
 
-			n, err := pr.Read(pageContent)
-			if err != nil {
-				return nil, fmt.Errorf("Table.Select: %w", err)
+			// If the given page is not found in the LRU cache, we read it from disk and put it in LRU
+			if errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
+				selectResult.Extra = "Not using page cache"
+				pr := indexparser.NewPageReader(t.reader)
+				pageContent := make([]byte, PageSize+datatype.LenMeta)
+				n, err := pr.Read(pageContent)
+				if err != nil {
+					return nil, fmt.Errorf("Table.Select: %w", err)
+				}
+				pageContent = pageContent[:n]
+				reader := bytes.NewReader(pageContent)
+				t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
+				if err = t.lru.Put(key, *index.NewPageWithContent(item.PagePos, pageContent)); err != nil {
+					return nil, fmt.Errorf("Table.Select: %w", err)
+				}
+			} else {
+				selectResult.Extra = "Using page cache"
+				t.recordParser = platformparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
 			}
-
-			pageContent = pageContent[:n]
-			reader := bytes.NewReader(pageContent)
-			t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
 		}
 	}
 	defer func() {
@@ -270,24 +322,25 @@ func (t *Table) Select(whereClause map[string]interface{}) ([]map[string]interfa
 	for {
 		err := t.recordParser.Parse()
 		if err == stdio.EOF {
-			return results, nil
+			return selectResult, nil
 		}
 		if err != nil {
-			return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
+			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
 		rawRecord := t.recordParser.Value
+		selectResult.RowsInspected++
 
 		if err = t.ensureColumnLength(rawRecord.Record); err != nil {
-			return nil, errors.WrapError(fmt.Errorf("Table.Select: %w", err))
+			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
 		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
 			continue
 		}
 
-		results = append(results, rawRecord.Record)
+		selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
 
 		if singleResult {
-			return results, nil
+			return selectResult, nil
 		}
 	}
 }
@@ -404,10 +457,11 @@ func (t *Table) evaluateWhereClause(whereClause map[string]interface{}, record m
 
 func (t *Table) ensureColumnLength(record map[string]interface{}) error {
 	if len(record) != len(t.columns) {
-		return errors.NewMismatchingColumnsError(len(t.columns), len(record))
+		return platformerror.NewMismatchingColumnsError(len(t.columns), len(record))
 	}
 	return nil
 }
+
 func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int, e error) {
 	for _, rec := range deletableRecords {
 		if _, err := t.file.Seek(rec.offset, stdio.SeekStart); err != nil {
@@ -439,7 +493,11 @@ func newDeletableRecord(id int64, offset int64, len uint32) *DeletableRecord {
 	}
 }
 
-func (t *Table) Delete(whereClause map[string]interface{}) ([]*platformparser.RawRecord, error) {
+func newDeleteResult() *DeleteResult {
+	return &DeleteResult{}
+}
+
+func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error) {
 	if err := t.ensureFilePointer(); err != nil {
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
@@ -447,8 +505,10 @@ func (t *Table) Delete(whereClause map[string]interface{}) ([]*platformparser.Ra
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 	deletableRecords := make([]*DeletableRecord, 0)
-	rawRecords := make([]*platformparser.RawRecord, 0)
 	primaryKeyName := t.getPrimaryKeyColumnName()
+
+	deleteResult := newDeleteResult()
+
 	for {
 		if err := t.recordParser.Parse(); err != nil {
 			if err == stdio.EOF {
@@ -470,10 +530,25 @@ func (t *Table) Delete(whereClause map[string]interface{}) ([]*platformparser.Ra
 			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
 
-		deletableRecord := newDeletableRecord(rawRecord.Record[primaryKeyName].(int64), pos-int64(rawRecord.FullSize), rawRecord.FullSize)
+		id := rawRecord.Record[primaryKeyName].(int64)
+
+		deletableRecord := newDeletableRecord(id, pos-int64(rawRecord.FullSize), rawRecord.FullSize)
 		deletableRecords = append(deletableRecords, deletableRecord)
-		rawRecords = append(rawRecords, rawRecord)
+
+		deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, rawRecord)
+
+		item, err := t.index.Get(id)
+		if err != nil {
+			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
+		}
+
+		deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(item.PagePos))
+
+		if _, err = t.file.Seek(int64(rawRecord.FullSize), stdio.SeekCurrent); err != nil {
+			return nil, fmt.Errorf("table.delete: %w", err)
+		}
 	}
+
 	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
 		return nil, fmt.Errorf("table.delete: %w", err)
 	}
@@ -482,10 +557,12 @@ func (t *Table) Delete(whereClause map[string]interface{}) ([]*platformparser.Ra
 	for _, v := range deletableRecords {
 		ids = append(ids, v.id)
 	}
+
 	if err := t.index.RemoveAll(ids); err != nil {
 		return nil, fmt.Errorf("table.delete: %w", err)
 	}
-	return rawRecords, nil
+
+	return deleteResult, nil
 }
 
 func (t *Table) Update(whereClause map[string]interface{}, values map[string]interface{}) (int, error) {
@@ -496,10 +573,12 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 		return 0, fmt.Errorf("Table.Update: %w", err)
 	}
 
-	rawRecords, err := t.Delete(whereClause)
+	deleteResult, err := t.Delete(whereClause)
 	if err != nil {
 		return 0, fmt.Errorf("table.Update: %w", err)
 	}
+
+	rawRecords := deleteResult.DeletedRecords
 
 	for _, rawRecord := range rawRecords {
 		updatedRecord := make(map[string]interface{})
@@ -521,11 +600,11 @@ func GetTableName(f *os.File) (string, error) {
 	// path/to/db/table.bin
 	parts := strings.Split(f.Name(), ".")
 	if len(parts) != 2 {
-		return "", errors.NewInvalidFilename(f.Name())
+		return "", platformerror.NewInvalidFilename(f.Name())
 	}
 	filenameParts := strings.Split(parts[0], string(filepath.Separator))
 	if len(filenameParts) == 0 {
-		return "", errors.NewInvalidFilename(f.Name())
+		return "", platformerror.NewInvalidFilename(f.Name())
 	}
 	return filenameParts[len(filenameParts)-1], nil
 }
@@ -548,8 +627,9 @@ func (t *Table) RestoreWAL() error {
 		return fmt.Errorf("Table.RestoreWAL: %w", err)
 	}
 	if n != len(restorableData.Data) {
-		return fmt.Errorf("Table.RestoreWAL: %w", errors.NewIncompleteWriteError(len(restorableData.Data), n))
+		return fmt.Errorf("Table.RestoreWAL: %w", platformerror.NewIncompleteWriteError(len(restorableData.Data), n))
 	}
+
 	fmt.Printf("RestoreWAL wrote %d bytes\n", n)
 	if err = t.wal.Commit(restorableData.LastEntry); err != nil {
 		return fmt.Errorf("Table.RestoreWAL: %w", err)
@@ -635,7 +715,7 @@ func (t *Table) insertEmptyPage() (*index.Page, error) {
 		return nil, fmt.Errorf("Table.insertEmptyPage: file.Write: %w", err)
 	}
 	if n != buf.Len() {
-		return nil, errors.NewIncompleteWriteError(buf.Len(), n)
+		return nil, platformerror.NewIncompleteWriteError(buf.Len(), n)
 	}
 
 	curPos, err := t.file.Seek(0, stdio.SeekCurrent)
@@ -661,7 +741,7 @@ func (t *Table) insertIntoPage(buf bytes.Buffer) (*index.Page, error) {
 		return nil, fmt.Errorf("Table.insertIntoPage: file.Write: %w", err)
 	}
 	if n != buf.Len() {
-		return nil, errors.NewIncompleteWriteError(buf.Len(), n)
+		return nil, platformerror.NewIncompleteWriteError(buf.Len(), n)
 	}
 	// seek back to the beginning of the page
 	if _, err = t.file.Seek(page.StartPos, stdio.SeekStart); err != nil {
@@ -717,7 +797,7 @@ func (t *Table) updatePageSize(page int64, offset int32) (e error) {
 
 	n, err := t.file.Write(b)
 	if n != len(b) {
-		return errors.NewIncompleteWriteError(len(b), n)
+		return platformerror.NewIncompleteWriteError(len(b), n)
 	}
 
 	if newLength == 0 {
@@ -800,6 +880,21 @@ func (t *Table) Close() error {
 	}
 	if err := t.index.Close(); err != nil {
 		return fmt.Errorf("Table.Close: %w", err)
+	}
+	return nil
+}
+
+func (t *Table) pageKey(pagePos int64) string {
+	return fmt.Sprintf("%s-%d", t.Name, pagePos/PageSize)
+}
+
+func (t *Table) invalidateCache(page *index.Page) error {
+	if err := t.lru.Remove(t.pageKey(page.StartPos)); err != nil {
+		if errors.Is(err, &platformerror.ItemNotFoundError{}) {
+			log.Printf("invalidating page from cache that doesn't exist: %d", page.StartPos)
+			return nil
+		}
+		return fmt.Errorf("table.invalidateCache: %w", err)
 	}
 	return nil
 }
