@@ -1,69 +1,73 @@
 package platform
 
 import (
-	"fmt"
+	"container/list"
 	"simple-database/internal/platform/datatype"
-	errors "simple-database/internal/platform/error"
 )
 
 type LRU[K datatype.Scalar, V any] struct {
-	list    *LinkedList[K]
-	dataMap map[K]V
-	cap     int
-	len     int
+	list       *GenericLinkedList[K]
+	dataMap    map[K]V
+	elementMap map[K]*list.Element
+	cap        int
 }
 
-func NewLRU[K datatype.Scalar, V any](cap int, equals EqFunc[K]) *LRU[K, V] {
+func NewLRU[K datatype.Scalar, V any](cap int) *LRU[K, V] {
 	return &LRU[K, V]{
-		list:    NewLinkedList[K](equals),
-		cap:     cap,
-		dataMap: make(map[K]V),
+		list:       NewLinkedList[K](),
+		cap:        cap,
+		dataMap:    make(map[K]V),
+		elementMap: make(map[K]*list.Element),
 	}
 }
 
 func (l *LRU[K, V]) Put(key K, val V) error {
-	if l.len >= l.cap {
-		if err := l.removeLeastRecentlyUsed(); err != nil {
-			return fmt.Errorf("lru.Put: %w", err)
-		}
+	if len(l.dataMap) >= l.cap {
+		l.removeLeastRecentlyUsed()
 	}
 
-	l.list.Append(key)
+	v := l.list.PushBack(key)
 	l.dataMap[key] = val
-	l.len++
+	l.elementMap[key] = v
 
 	return nil
 }
 
-func (l *LRU[T, K]) removeLeastRecentlyUsed() error {
-	node, err := l.list.RemoveByIdx(0)
-	if err != nil {
-		return fmt.Errorf("lru.removeLeastRecentlyUsed: %w", err)
+func (l *LRU[K, V]) removeLeastRecentlyUsed() {
+	val := l.list.Front()
+	if val == nil {
+		return
 	}
-	l.len--
-	delete(l.dataMap, node.val)
-	return nil
+	delete(l.elementMap, val.Value.(K))
+	delete(l.dataMap, val.Value.(K))
+	l.list.RemoveFront()
 }
 
-func (l *LRU[K, V]) Get(key K) (V, error) {
+func (l *LRU[K, V]) Get(key K) V {
 	var zero V
 	val, ok := l.dataMap[key]
 	if !ok {
-		return zero, errors.NewItemNotInLinkedListError(l.dataMap, key)
+		return zero
 	}
-	err := l.list.Remove(key)
-	if err != nil {
-		return zero, fmt.Errorf("lru.Get: %w", err)
-	}
-	l.list.Append(key)
-	return val, nil
+	elementKey := l.elementMap[key]
+	l.list.Remove(elementKey)
+	l.list.PushBack(key)
+	return val
 }
 
-func (l *LRU[K, V]) Remove(key K) error {
+func (l *LRU[K, V]) Contains(key K) bool {
+	_, ok := l.dataMap[key]
+	return ok
+}
+
+func (l *LRU[K, V]) Remove(key K) {
 	_, ok := l.dataMap[key]
 	if !ok {
-		return errors.NewItemNotInLinkedListError(l.dataMap, key)
+		return
 	}
+
+	elementVal := l.elementMap[key]
 	delete(l.dataMap, key)
-	return l.list.Remove(key)
+	delete(l.elementMap, key)
+	l.list.Remove(elementVal)
 }

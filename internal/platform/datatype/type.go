@@ -1,5 +1,6 @@
 package datatype
 
+//goland:noinspection GoUnusedConst
 const (
 	TypeInt64            byte = 1
 	TypeString           byte = 2

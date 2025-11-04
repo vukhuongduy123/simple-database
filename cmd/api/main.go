@@ -68,12 +68,22 @@ func main() {
 	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
-
 	if err != nil && err != io.EOF {
 		fmt.Println(err)
 		return
 	}
+	fmt.Println(resultSet)
 
+	start = time.Now()
+	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
+		"id": int64(501),
+	})
+	elapsed = time.Since(start)
+	fmt.Printf("Time elapsed: %s\n", elapsed)
+	if err != nil && err != io.EOF {
+		fmt.Println(err)
+		return
+	}
 	fmt.Println(resultSet)
 
 	start = time.Now()

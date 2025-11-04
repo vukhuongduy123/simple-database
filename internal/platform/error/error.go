@@ -1,7 +1,6 @@
 package error
 
 import (
-	"errors"
 	"fmt"
 	"runtime"
 )
@@ -189,17 +188,4 @@ func (e *ItemNotFoundError) Error() string {
 type ItemNotInLinkedListError struct {
 	values any
 	item   any
-}
-
-func NewItemNotInLinkedListError(values, item any) *ItemNotInLinkedListError {
-	return &ItemNotInLinkedListError{values: values, item: item}
-}
-
-func (e *ItemNotInLinkedListError) Error() string {
-	return fmt.Sprintf("item %v not found in %v", e.item, e.values)
-}
-
-func (e *ItemNotInLinkedListError) Is(target error) bool {
-	var errItemNotFound *ItemNotInLinkedListError
-	return errors.As(target, &errItemNotFound)
 }

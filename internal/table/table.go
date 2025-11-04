@@ -3,10 +3,8 @@ package table
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	stdio "io"
-	"log"
 	"os"
 	"path/filepath"
 	"simple-database/internal/platform"
@@ -113,7 +111,7 @@ func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefiniti
 		recordParser:    parser,
 		wal:             wal,
 		index:           idx,
-		lru:             platform.NewLRU[string, index.Page](10, func(a, b string) bool { return a == b }),
+		lru:             platform.NewLRU[string, index.Page](10),
 	}
 	return t, nil
 }
@@ -129,7 +127,7 @@ func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r
 		recordParser:    parser,
 		wal:             wal,
 		index:           idx,
-		lru:             platform.NewLRU[string, index.Page](10, func(a, b string) bool { return a == b }),
+		lru:             platform.NewLRU[string, index.Page](10),
 	}, nil
 }
 
@@ -221,9 +219,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	if err = t.invalidateCache(page); err != nil {
-		return 0, fmt.Errorf("table.Insert: %w", err)
-	}
+	t.invalidateCache(page)
 
 	err = t.wal.Commit(walEntry)
 	if err != nil {
@@ -288,32 +284,27 @@ func (t *Table) Select(whereClause map[string]interface{}) (*SelectResult, error
 		}
 
 		key := t.pageKey(item.PagePos)
-		page, err := t.lru.Get(key)
-		if err != nil {
-			if !errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
+
+		if !t.lru.Contains(key) {
+			selectResult.Extra = "Not using page cache"
+			pr := indexparser.NewPageReader(t.reader)
+			pageContent := make([]byte, PageSize+datatype.LenMeta)
+			n, err := pr.Read(pageContent)
+			if err != nil {
 				return nil, fmt.Errorf("Table.Select: %w", err)
 			}
-
-			// If the given page is not found in the LRU cache, we read it from disk and put it in LRU
-			if errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
-				selectResult.Extra = "Not using page cache"
-				pr := indexparser.NewPageReader(t.reader)
-				pageContent := make([]byte, PageSize+datatype.LenMeta)
-				n, err := pr.Read(pageContent)
-				if err != nil {
-					return nil, fmt.Errorf("Table.Select: %w", err)
-				}
-				pageContent = pageContent[:n]
-				reader := bytes.NewReader(pageContent)
-				t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
-				if err = t.lru.Put(key, *index.NewPageWithContent(item.PagePos, pageContent)); err != nil {
-					return nil, fmt.Errorf("Table.Select: %w", err)
-				}
-			} else {
-				selectResult.Extra = "Using page cache"
-				t.recordParser = platformparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
+			pageContent = pageContent[:n]
+			reader := bytes.NewReader(pageContent)
+			t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
+			if err = t.lru.Put(key, *index.NewPageWithContent(item.PagePos, pageContent)); err != nil {
+				return nil, fmt.Errorf("Table.Select: %w", err)
 			}
+		} else {
+			page := t.lru.Get(key)
+			selectResult.Extra = "Using page cache"
+			t.recordParser = platformparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
 		}
+
 	}
 	defer func() {
 		t.recordParser = platformparser.NewRecordParser(t.file, t.ColumnNames)
@@ -586,9 +577,7 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 			}
 		}
 		if _, err = t.Insert(updatedRecord); err != nil {
-			if !errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
-				return 0, platformerror.WrapError(fmt.Errorf("Table.Update: %w", err))
-			}
+			return 0, fmt.Errorf("Table.Update: %w", err)
 		}
 	}
 	return len(rawRecords), nil
@@ -886,13 +875,6 @@ func (t *Table) pageKey(pagePos int64) string {
 	return fmt.Sprintf("%s-%d", t.Name, pagePos/PageSize)
 }
 
-func (t *Table) invalidateCache(page *index.Page) error {
-	if err := t.lru.Remove(t.pageKey(page.StartPos)); err != nil {
-		if errors.Is(err, &platformerror.ItemNotFoundError{}) {
-			log.Printf("invalidating page from cache that doesn't exist: %d", page.StartPos)
-			return nil
-		}
-		return fmt.Errorf("table.invalidateCache: %w", err)
-	}
-	return nil
+func (t *Table) invalidateCache(page *index.Page) {
+	t.lru.Remove(t.pageKey(page.StartPos))
 }
