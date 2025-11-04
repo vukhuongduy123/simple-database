@@ -12,19 +12,27 @@ type ValueMarshaler[T any] struct {
 	Value T
 }
 
-func (m *ValueMarshaler[T]) MarshalBinary() ([]byte, error) {
+func (m *ValueMarshaler[T]) marshalBinary(order binary.ByteOrder) ([]byte, error) {
 	buf := bytes.Buffer{}
 	switch v := any(m.Value).(type) {
 	case string:
-		if err := binary.Write(&buf, binary.LittleEndian, []byte(v)); err != nil {
+		if err := binary.Write(&buf, order, []byte(v)); err != nil {
 			return nil, fmt.Errorf("ValueMarshaler.MarshalBinary: %w", err)
 		}
 	default:
-		if err := binary.Write(&buf, binary.LittleEndian, m.Value); err != nil {
+		if err := binary.Write(&buf, order, m.Value); err != nil {
 			return nil, fmt.Errorf("ValueMarshaler.MarshalBinary: %w", err)
 		}
 	}
 	return buf.Bytes(), nil
+}
+
+func (m *ValueMarshaler[T]) MarshalBinary() ([]byte, error) {
+	return m.marshalBinary(binary.LittleEndian)
+}
+
+func (m *ValueMarshaler[T]) MarshalBinaryWithBigEndian() ([]byte, error) {
+	return m.marshalBinary(binary.BigEndian)
 }
 
 type ValueUnmarshaler[T any] struct {

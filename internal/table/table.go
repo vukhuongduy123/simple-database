@@ -543,17 +543,13 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 		}
 
 		deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(item.PagePos))
-
-		if _, err = t.file.Seek(int64(rawRecord.FullSize), stdio.SeekCurrent); err != nil {
-			return nil, fmt.Errorf("table.delete: %w", err)
-		}
 	}
 
 	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
 		return nil, fmt.Errorf("table.delete: %w", err)
 	}
 
-	ids := make([]int64, len(deletableRecords))
+	ids := make([]int64, 0)
 	for _, v := range deletableRecords {
 		ids = append(ids, v.id)
 	}
@@ -590,7 +586,9 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 			}
 		}
 		if _, err = t.Insert(updatedRecord); err != nil {
-			return 0, fmt.Errorf("Table.Update: %w", err)
+			if !errors.Is(err, &platformerror.ItemNotInLinkedListError{}) {
+				return 0, platformerror.WrapError(fmt.Errorf("Table.Update: %w", err))
+			}
 		}
 	}
 	return len(rawRecords), nil

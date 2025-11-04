@@ -105,7 +105,7 @@ func (i *Index) Add(id, pagePos int64) error {
 		return fmt.Errorf("index.Add: %w", err)
 	}
 	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
-	idBuf, err := int64Marshaler.MarshalBinary()
+	idBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
 	}
@@ -124,7 +124,7 @@ func (i *Index) Add(id, pagePos int64) error {
 
 func (i *Index) Get(val int64) (Item, error) {
 	int64Marshaler := platformparser.NewValueMarshaler[int64](val)
-	valBuf, err := int64Marshaler.MarshalBinary()
+	valBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return Item{}, fmt.Errorf("index.Add: %w", err)
 	}
@@ -149,7 +149,7 @@ func (i *Index) Close() error {
 
 func (i *Index) Remove(id int64) error {
 	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
-	idBuf, err := int64Marshaler.MarshalBinary()
+	idBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
 	}

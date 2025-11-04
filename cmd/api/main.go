@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"runtime/pprof"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/table/column"
@@ -15,17 +14,6 @@ import (
 func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
-	f, err := os.Create("cpu.prof")
-	if err != nil {
-		log.Fatal("could not create CPU profile: ", err)
-	}
-	_ = f.Close()
-
-	// Start CPU profiling
-	if err := pprof.StartCPUProfile(f); err != nil {
-		log.Fatal("could not start CPU profile: ", err)
-	}
-	defer pprof.StopCPUProfile()
 
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
@@ -57,7 +45,7 @@ func main() {
 	}
 
 	start := time.Now()
-	for i := 0; i < 10_000_000; i++ {
+	for i := 0; i < 1000; i++ {
 		start := time.Now()
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
@@ -76,7 +64,7 @@ func main() {
 
 	start = time.Now()
 	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(51234),
+		"id": int64(500),
 	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
@@ -90,11 +78,52 @@ func main() {
 
 	start = time.Now()
 	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
-		"username": "This is a user 51234",
+		"username": "This is a user 500",
 	})
 	elapsed = time.Since(start)
 	fmt.Printf("Time elapsed: %s\n", elapsed)
 	fmt.Println(resultSet)
+
+	{
+		start = time.Now()
+		resultSet, err = db.Tables["users"].Select(nil)
+		elapsed = time.Since(start)
+		fmt.Printf("Time elapsed: %s\n", elapsed)
+		results := resultSet.Rows
+		for idx, result := range results {
+			fmt.Printf("%d: %v\n", idx, result)
+		}
+	}
+
+	{
+		start = time.Now()
+		oldValueMap := map[string]any{}
+		newValueMap := map[string]any{}
+		for i := 0; i < 1000; i++ {
+			fmt.Println("Updating index " + fmt.Sprint(i))
+
+			oldValueMap["id"] = int64(i)
+			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
+			_, err = db.Tables["users"].Update(oldValueMap, newValueMap)
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+
+		elapsed = time.Since(start)
+		fmt.Printf("Time elapsed: %s\n", elapsed)
+	}
+
+	{
+		start = time.Now()
+		resultSet, err = db.Tables["users"].Select(nil)
+		elapsed = time.Since(start)
+		fmt.Printf("Time elapsed: %s\n", elapsed)
+		results := resultSet.Rows
+		for idx, result := range results {
+			fmt.Printf("%d: %v\n", idx, result)
+		}
+	}
 
 	defer func(db *internal.Database) {
 		err := db.Close()
