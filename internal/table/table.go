@@ -500,7 +500,23 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 
 	deleteResult := newDeleteResult()
 
-	for {
+	selectResult, err := t.Select(whereClause)
+	if err != nil {
+		return nil, fmt.Errorf("Table.Delete: %w", err)
+	}
+
+	for _, row := range selectResult.Rows {
+		id, _ := row[primaryKeyName].(int64)
+
+		page, err := t.index.Get(id)
+		if err != nil {
+			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
+		}
+
+		if _, err = t.file.Seek(page.PagePos, stdio.SeekStart); err != nil {
+			return nil, fmt.Errorf("Table.Delete: %w", err)
+		}
+
 		if err := t.recordParser.Parse(); err != nil {
 			if err == stdio.EOF {
 				break
@@ -521,19 +537,12 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
 
-		id := rawRecord.Record[primaryKeyName].(int64)
-
 		deletableRecord := newDeletableRecord(id, pos-int64(rawRecord.FullSize), rawRecord.FullSize)
 		deletableRecords = append(deletableRecords, deletableRecord)
 
 		deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, rawRecord)
 
-		item, err := t.index.Get(id)
-		if err != nil {
-			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
-		}
-
-		deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(item.PagePos))
+		deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(page.PagePos))
 	}
 
 	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
