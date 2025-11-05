@@ -174,10 +174,10 @@ func (e *InvalidFilename) Error() string {
 }
 
 type ItemNotFoundError struct {
-	id int64
+	id any
 }
 
-func NewItemNotFoundError(id int64) *ItemNotFoundError {
+func NewItemNotFoundError(id any) *ItemNotFoundError {
 	return &ItemNotFoundError{id: id}
 }
 
@@ -188,4 +188,16 @@ func (e *ItemNotFoundError) Error() string {
 type ItemNotInLinkedListError struct {
 	values any
 	item   any
+}
+
+type UnknownColumnValueError struct {
+	val any
+}
+
+func NewUnknownColumnValueError(val any) *UnknownColumnValueError {
+	return &UnknownColumnValueError{val: val}
+}
+
+func (e *UnknownColumnValueError) Error() string {
+	return fmt.Sprintf("uknown column with type %v", e.val)
 }

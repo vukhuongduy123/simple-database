@@ -16,13 +16,12 @@ type Index struct {
 	btree *btree.BTree
 }
 
-// Item TODO: support for multiple types
 type Item struct {
-	val     int64
+	val     any
 	PagePos int64
 }
 
-func NewItem(val, pagePos int64) *Item {
+func NewItem(val any, pagePos int64) *Item {
 	return &Item{
 		val:     val,
 		PagePos: pagePos,
@@ -99,13 +98,13 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 	return nil
 }
 
-func (i *Index) Add(id, pagePos int64) error {
-	itemBuf, err := NewItem(id, pagePos).MarshalBinary()
+func (i *Index) Add(val any, pagePos int64) error {
+	itemBuf, err := NewItem(val, pagePos).MarshalBinary()
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
 	}
-	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
-	idBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
+	marshaler := platformparser.NewValueMarshaler[any](val)
+	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
 	}
@@ -122,9 +121,9 @@ func (i *Index) Add(id, pagePos int64) error {
 	return nil
 }
 
-func (i *Index) Get(val int64) (Item, error) {
-	int64Marshaler := platformparser.NewValueMarshaler[int64](val)
-	valBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
+func (i *Index) Get(val any) (Item, error) {
+	marshaler := platformparser.NewValueMarshaler[any](val)
+	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return Item{}, fmt.Errorf("index.Add: %w", err)
 	}
@@ -147,9 +146,9 @@ func (i *Index) Close() error {
 	return i.btree.Close()
 }
 
-func (i *Index) Remove(id int64) error {
-	int64Marshaler := platformparser.NewValueMarshaler[int64](id)
-	idBuf, err := int64Marshaler.MarshalBinaryWithBigEndian()
+func (i *Index) Remove(val any) error {
+	marshaler := platformparser.NewValueMarshaler[any](val)
+	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return fmt.Errorf("index.Add: %w", err)
 	}
@@ -160,7 +159,7 @@ func (i *Index) Remove(id int64) error {
 	return nil
 }
 
-func (i *Index) RemoveAll(ids []int64) error {
+func (i *Index) RemoveAll(ids []any) error {
 	for _, id := range ids {
 		err := i.Remove(id)
 		if err != nil {
@@ -168,4 +167,54 @@ func (i *Index) RemoveAll(ids []int64) error {
 		}
 	}
 	return nil
+}
+
+// Compare TODO: for now only support first equal item
+func (i *Index) Compare(val any, op string) (Item, error) {
+	marshaler := platformparser.NewValueMarshaler[any](val)
+	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
+	if err != nil {
+		return Item{}, fmt.Errorf("index.Add: %w", err)
+	}
+
+	item := Item{}
+
+	var keys []*btree.Key
+
+	switch op {
+	case datatype.OperatorEqual:
+		return i.Get(val)
+	case datatype.OperatorGreater:
+		keys, err = i.btree.GreaterThan(valBuf)
+	case datatype.OperatorLess:
+		keys, err = i.btree.LessThan(valBuf)
+	case datatype.OperatorGreaterOrEqual:
+		keys, err = i.btree.GreaterThanEq(valBuf)
+	case datatype.OperatorLessOrEqual:
+		keys, err = i.btree.LessThanEq(valBuf)
+	case datatype.OperatorNotEqual:
+		keys = make([]*btree.Key, 0)
+		greaterKeys, err := i.btree.GreaterThan(valBuf)
+		if err != nil {
+			return Item{}, fmt.Errorf("index.Add: %w", err)
+		}
+		lessKeys, err := i.btree.LessThan(valBuf)
+		if err != nil {
+			return Item{}, fmt.Errorf("index.Add: %w", err)
+		}
+		keys = append(keys, greaterKeys...)
+		keys = append(keys, lessKeys...)
+	default:
+		return Item{}, fmt.Errorf("index.Add: Unknown operator: %s", op)
+	}
+
+	if err != nil {
+		return Item{}, fmt.Errorf("index.Add: %w", err)
+	}
+
+	err = item.UnmarshalBinary(keys[0].V[0])
+	if err != nil {
+		return Item{}, fmt.Errorf("index.Add: %w", err)
+	}
+	return item, nil
 }

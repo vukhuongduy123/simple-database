@@ -24,8 +24,10 @@ type RawRecord struct {
 	// FullSize is a sum of [RawRecord.Size] and [types.LenMeta] that includes metadata associated with records such as the type and length bytes
 	FullSize uint32
 	// Record contains the actual fields
-	Record map[string]interface{}
+	Record RecordValue
 }
+
+type RecordValue map[string]any
 
 func NewRecordParser(f stdio.ReadSeeker, columns []string) *RecordParser {
 	return &RecordParser{

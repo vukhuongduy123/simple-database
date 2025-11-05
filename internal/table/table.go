@@ -15,7 +15,7 @@ import (
 	"simple-database/internal/platform/parser"
 	"simple-database/internal/table/column"
 	"simple-database/internal/table/column/io"
-	platformparser "simple-database/internal/table/column/parser"
+	tableparser "simple-database/internal/table/column/parser"
 	"simple-database/internal/table/index"
 	indexparser "simple-database/internal/table/index/parser"
 	"simple-database/internal/table/wal"
@@ -38,25 +38,45 @@ type Table struct {
 	columns         Columns
 	reader          *io3.Reader
 	columnDefReader *io.ColumnDefinitionReader
-	recordParser    *platformparser.RecordParser
+	recordParser    *tableparser.RecordParser
 	wal             *wal.WAL
 	index           *index.Index
 	lru             *platform.LRU[string, index.Page]
 }
 
 type SelectResult struct {
-	Rows          []map[string]interface{}
+	Rows          []tableparser.RecordValue
 	AccessType    string
 	RowsInspected int
 	Extra         string
 }
+
+type Comparator struct {
+	Operator string
+	Value    any
+}
+
+type SelectCommand struct {
+	WhereClause map[string]Comparator
+	Limit       int
+}
+
+func (c *SelectCommand) FilteredColumnNames() []string {
+	columnNames := make([]string, 0)
+	for k := range c.WhereClause {
+		columnNames = append(columnNames, k)
+	}
+
+	return columnNames
+}
+
 type DeleteResult struct {
-	DeletedRecords []*platformparser.RawRecord
+	DeletedRecords []*tableparser.RawRecord
 	AffectedPages  []*index.Page
 }
 
 type DeletableRecord struct {
-	id     int64
+	id     any
 	offset int64
 	len    uint32
 }
@@ -71,7 +91,7 @@ func newSelectResult() *SelectResult {
 	}
 }
 
-func (t *Table) SetRecordParser(recParser *platformparser.RecordParser) error {
+func (t *Table) SetRecordParser(recParser *tableparser.RecordParser) error {
 	if recParser == nil {
 		return fmt.Errorf("Table.SetRecordParser: recParser cannot be nil")
 	}
@@ -93,7 +113,7 @@ func (t *Table) WriteColumnDefinitions() error {
 	return nil
 }
 
-func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser,
+func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *tableparser.RecordParser,
 	wal *wal.WAL, idx *index.Index) (*Table, error) {
 	if f == nil || reader == nil || columnDefReader == nil {
 		return nil, fmt.Errorf("NewTable: nil argument")
@@ -117,7 +137,7 @@ func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefiniti
 }
 
 func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r *io3.Reader,
-	columnDefReader *io.ColumnDefinitionReader, parser *platformparser.RecordParser, wal *wal.WAL, idx *index.Index) (*Table, error) {
+	columnDefReader *io.ColumnDefinitionReader, parser *tableparser.RecordParser, wal *wal.WAL, idx *index.Index) (*Table, error) {
 	return &Table{
 		file:            file,
 		ColumnNames:     columnNames,
@@ -156,7 +176,7 @@ func (t *Table) ReadColumnDefinitions() error {
 	return nil
 }
 
-func (t *Table) Insert(record map[string]any) (int, error) {
+func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
@@ -215,7 +235,7 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	if err = t.index.Add(record["id"].(int64), page.StartPos); err != nil {
+	if err = t.index.Add(record[t.getPrimaryKeyColumnName()], page.StartPos); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
@@ -229,13 +249,18 @@ func (t *Table) Insert(record map[string]any) (int, error) {
 	return 1, nil
 }
 
-func (t *Table) validateColumns(record map[string]any) error {
+func (t *Table) validateColumns(record tableparser.RecordValue) error {
 	for col, val := range record {
 		if _, ok := t.columns[col]; !ok {
 			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewUnknownColumnError(col))
 		}
+
 		if !t.columns[col].Opts.AllowNull && val == nil {
 			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewColumnNotNullableError(col))
+		}
+
+		if !datatype.IsScalar(val) {
+			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewUnknownColumnValueError(val))
 		}
 	}
 	return nil
@@ -252,27 +277,26 @@ func (t *Table) getPrimaryKeyColumnName() string {
 	return primaryKeyColumnName
 }
 
-func (t *Table) Select(whereClause map[string]interface{}) (*SelectResult, error) {
+func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	if err := t.ensureFilePointer(); err != nil {
 		return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
-	if err := t.validateWhereClause(whereClause); err != nil {
+
+	filteredColumnNames := command.FilteredColumnNames()
+	if err := t.validateColumnNames(filteredColumnNames); err != nil {
 		return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 	}
 
 	selectResult := newSelectResult()
 
-	fields := make([]string, 0)
-	for k := range whereClause {
-		fields = append(fields, k)
-	}
-
 	singleResult := false
 	primaryKeyName := t.getPrimaryKeyColumnName()
 
-	if slices.Contains(fields, primaryKeyName) {
-		id := whereClause[primaryKeyName].(int64)
-		item, err := t.index.Get(id)
+	if slices.Contains(filteredColumnNames, primaryKeyName) {
+		id := command.WhereClause[primaryKeyName].Value
+		op := command.WhereClause[primaryKeyName].Operator
+
+		item, err := t.index.Compare(id, op)
 		if err != nil {
 			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
@@ -295,19 +319,19 @@ func (t *Table) Select(whereClause map[string]interface{}) (*SelectResult, error
 			}
 			pageContent = pageContent[:n]
 			reader := bytes.NewReader(pageContent)
-			t.recordParser = platformparser.NewRecordParser(reader, t.ColumnNames)
+			t.recordParser = tableparser.NewRecordParser(reader, t.ColumnNames)
 			if err = t.lru.Put(key, *index.NewPageWithContent(item.PagePos, pageContent)); err != nil {
 				return nil, fmt.Errorf("Table.Select: %w", err)
 			}
 		} else {
 			page := t.lru.Get(key)
 			selectResult.Extra = "Using page cache"
-			t.recordParser = platformparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
+			t.recordParser = tableparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
 		}
 
 	}
 	defer func() {
-		t.recordParser = platformparser.NewRecordParser(t.file, t.ColumnNames)
+		t.recordParser = tableparser.NewRecordParser(t.file, t.ColumnNames)
 	}()
 
 	for {
@@ -324,7 +348,7 @@ func (t *Table) Select(whereClause map[string]interface{}) (*SelectResult, error
 		if err = t.ensureColumnLength(rawRecord.Record); err != nil {
 			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
-		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
+		if !t.evaluateWhereClause(command, rawRecord.Record) {
 			continue
 		}
 
@@ -420,33 +444,33 @@ func (t *Table) skipDeletedRecords() (dataType byte, err error) {
 	}
 }
 
-func (t *Table) validateWhereClause(whereClause map[string]interface{}) error {
-	if whereClause == nil {
+func (t *Table) validateColumnNames(columnNames []string) error {
+	if columnNames == nil || len(columnNames) == 0 {
 		return nil
 	}
 
-	for k := range whereClause {
-		if !slices.Contains(t.ColumnNames, k) {
-			return fmt.Errorf("unknown column in where statement: %s", k)
+	for _, val := range columnNames {
+		if !slices.Contains(t.ColumnNames, val) {
+			return fmt.Errorf("unknown column in where statement: %s", val)
 		}
 	}
 	return nil
 }
 
-func (t *Table) evaluateWhereClause(whereClause map[string]interface{}, record map[string]interface{}) bool {
-	if whereClause == nil {
+func (t *Table) evaluateWhereClause(command SelectCommand, record tableparser.RecordValue) bool {
+	if command.WhereClause == nil || len(command.WhereClause) == 0 {
 		return true
 	}
 
-	for k, v := range whereClause {
-		if record[k] != v {
+	for k, v := range command.WhereClause {
+		if !datatype.Compare(record[k], v.Value, v.Operator) {
 			return false
 		}
 	}
 	return true
 }
 
-func (t *Table) ensureColumnLength(record map[string]interface{}) error {
+func (t *Table) ensureColumnLength(record tableparser.RecordValue) error {
 	if len(record) != len(t.columns) {
 		return platformerror.NewMismatchingColumnsError(len(t.columns), len(record))
 	}
@@ -476,7 +500,7 @@ func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int
 	return len(deletableRecords), nil
 }
 
-func newDeletableRecord(id int64, offset int64, len uint32) *DeletableRecord {
+func newDeletableRecord(id any, offset int64, len uint32) *DeletableRecord {
 	return &DeletableRecord{
 		id:     id,
 		offset: offset,
@@ -488,11 +512,11 @@ func newDeleteResult() *DeleteResult {
 	return &DeleteResult{}
 }
 
-func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error) {
+func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	if err := t.ensureFilePointer(); err != nil {
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
-	if err := t.validateWhereClause(whereClause); err != nil {
+	if err := t.validateColumnNames(command.FilteredColumnNames()); err != nil {
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 	deletableRecords := make([]*DeletableRecord, 0)
@@ -500,13 +524,13 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 
 	deleteResult := newDeleteResult()
 
-	selectResult, err := t.Select(whereClause)
+	selectResult, err := t.Select(command)
 	if err != nil {
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 
 	for _, row := range selectResult.Rows {
-		id, _ := row[primaryKeyName].(int64)
+		id, _ := row[primaryKeyName]
 
 		page, err := t.index.Get(id)
 		if err != nil {
@@ -528,7 +552,7 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 		if err := t.ensureColumnLength(rawRecord.Record); err != nil {
 			return nil, fmt.Errorf("Table.Delete: %w", err)
 		}
-		if !t.evaluateWhereClause(whereClause, rawRecord.Record) {
+		if !t.evaluateWhereClause(command, rawRecord.Record) {
 			continue
 		}
 
@@ -549,7 +573,7 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 		return nil, fmt.Errorf("table.delete: %w", err)
 	}
 
-	ids := make([]int64, 0)
+	ids := make([]any, 0)
 	for _, v := range deletableRecords {
 		ids = append(ids, v.id)
 	}
@@ -561,15 +585,15 @@ func (t *Table) Delete(whereClause map[string]interface{}) (*DeleteResult, error
 	return deleteResult, nil
 }
 
-func (t *Table) Update(whereClause map[string]interface{}, values map[string]interface{}) (int, error) {
+func (t *Table) Update(command SelectCommand, record tableparser.RecordValue) (int, error) {
 	if err := t.ensureFilePointer(); err != nil {
 		return 0, fmt.Errorf("Table.Update: %w", err)
 	}
-	if err := t.validateColumns(values); err != nil {
+	if err := t.validateColumns(record); err != nil {
 		return 0, fmt.Errorf("Table.Update: %w", err)
 	}
 
-	deleteResult, err := t.Delete(whereClause)
+	deleteResult, err := t.Delete(command)
 	if err != nil {
 		return 0, fmt.Errorf("table.Update: %w", err)
 	}
@@ -579,7 +603,7 @@ func (t *Table) Update(whereClause map[string]interface{}, values map[string]int
 	for _, rawRecord := range rawRecords {
 		updatedRecord := make(map[string]interface{})
 		for k, v := range rawRecord.Record {
-			if updatedVal, ok := values[k]; ok {
+			if updatedVal, ok := record[k]; ok {
 				updatedRecord[k] = updatedVal
 			} else {
 				updatedRecord[k] = v
@@ -881,7 +905,7 @@ func (t *Table) Close() error {
 }
 
 func (t *Table) pageKey(pagePos int64) string {
-	return fmt.Sprintf("%s-%d", t.Name, pagePos/PageSize)
+	return fmt.Sprintf("%s-%d", t.Name, pagePos)
 }
 
 func (t *Table) invalidateCache(page *index.Page) {

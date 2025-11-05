@@ -2,11 +2,11 @@ package main
 
 import (
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
+	"simple-database/internal/table"
 	"simple-database/internal/table/column"
 	"time"
 )
@@ -46,7 +46,6 @@ func main() {
 
 	start := time.Now()
 	for i := 0; i < 1000; i++ {
-		start := time.Now()
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
@@ -56,49 +55,57 @@ func main() {
 		if err != nil {
 			fmt.Println(err)
 		}
-		elapsed := time.Since(start)
-		fmt.Printf("Time elapsed %d: %s\n", i, elapsed)
 	}
 	elapsed := time.Since(start)
 	fmt.Printf("Time elapsed running 10M insert: %s\n", elapsed)
 
 	start = time.Now()
-	resultSet, err := db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(500),
+	whereClause := make(map[string]table.Comparator)
+	whereClause["id"] = table.Comparator{
+		Operator: datatype.OperatorEqual,
+		Value:    int64(500),
+	}
+
+	resultSet, err := db.Tables["users"].Select(table.SelectCommand{
+		WhereClause: whereClause,
+		Limit:       10,
 	})
 	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed: %s\n", elapsed)
-	if err != nil && err != io.EOF {
-		fmt.Println(err)
-		return
-	}
+	fmt.Printf("Time elapsed selecting with index: %s\n", elapsed)
 	fmt.Println(resultSet)
 
 	start = time.Now()
-	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
-		"id": int64(501),
+	whereClause = make(map[string]table.Comparator)
+	whereClause["id"] = table.Comparator{
+		Operator: datatype.OperatorEqual,
+		Value:    int64(501),
+	}
+	resultSet, err = db.Tables["users"].Select(table.SelectCommand{
+		WhereClause: whereClause,
+		Limit:       10,
 	})
 	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed: %s\n", elapsed)
-	if err != nil && err != io.EOF {
-		fmt.Println(err)
-		return
-	}
+	fmt.Printf("Time elapsed selecting with cache: %s\n", elapsed)
 	fmt.Println(resultSet)
 
-	start = time.Now()
-	resultSet, err = db.Tables["users"].Select(map[string]interface{}{
-		"username": "This is a user 500",
+	whereClause = make(map[string]table.Comparator)
+	whereClause["username"] = table.Comparator{
+		Operator: datatype.OperatorEqual,
+		Value:    "This is a user 500",
+	}
+	resultSet, err = db.Tables["users"].Select(table.SelectCommand{
+		WhereClause: whereClause,
+		Limit:       10,
 	})
 	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed: %s\n", elapsed)
+	fmt.Printf("Time elapsed selecting no index: %s\n", elapsed)
 	fmt.Println(resultSet)
 
 	{
 		start = time.Now()
-		resultSet, err = db.Tables["users"].Select(nil)
+		resultSet, err = db.Tables["users"].Select(table.SelectCommand{})
 		elapsed = time.Since(start)
-		fmt.Printf("Time elapsed: %s\n", elapsed)
+		fmt.Printf("Time elapsed selecting all: %s\n", elapsed)
 		results := resultSet.Rows
 		for idx, result := range results {
 			fmt.Printf("%d: %v\n", idx, result)
@@ -107,28 +114,37 @@ func main() {
 
 	{
 		start = time.Now()
-		oldValueMap := map[string]any{}
 		newValueMap := map[string]any{}
 		for i := 0; i < 1000; i++ {
-			fmt.Println("Updating index " + fmt.Sprint(i))
+			if i == 696 {
+				fmt.Printf("Found it\n")
+			}
+			whereClause = make(map[string]table.Comparator)
+			whereClause["id"] = table.Comparator{
+				Operator: datatype.OperatorEqual,
+				Value:    int64(i),
+			}
 
-			oldValueMap["id"] = int64(i)
 			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
-			_, err = db.Tables["users"].Update(oldValueMap, newValueMap)
+			_, err = db.Tables["users"].Update(
+				table.SelectCommand{
+					WhereClause: whereClause,
+					Limit:       1,
+				}, newValueMap)
 			if err != nil {
 				log.Fatal(err)
 			}
 		}
 
 		elapsed = time.Since(start)
-		fmt.Printf("Time elapsed: %s\n", elapsed)
+		fmt.Printf("Time elapsed update: %s\n", elapsed)
 	}
 
 	{
 		start = time.Now()
-		resultSet, err = db.Tables["users"].Select(nil)
+		resultSet, err = db.Tables["users"].Select(table.SelectCommand{})
 		elapsed = time.Since(start)
-		fmt.Printf("Time elapsed: %s\n", elapsed)
+		fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
 		results := resultSet.Rows
 		for idx, result := range results {
 			fmt.Printf("%d: %v\n", idx, result)
