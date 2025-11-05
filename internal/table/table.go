@@ -11,7 +11,7 @@ import (
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
-	io3 "simple-database/internal/platform/io"
+	platformio "simple-database/internal/platform/io"
 	"simple-database/internal/platform/parser"
 	"simple-database/internal/table/column"
 	"simple-database/internal/table/column/io"
@@ -36,11 +36,11 @@ type Table struct {
 	file            *os.File
 	ColumnNames     []string
 	columns         Columns
-	reader          *io3.Reader
+	reader          *platformio.Reader
 	columnDefReader *io.ColumnDefinitionReader
 	recordParser    *tableparser.RecordParser
 	wal             *wal.WAL
-	index           *index.Index
+	indexes         map[string]*index.Index
 	lru             *platform.LRU[string, index.Page]
 }
 
@@ -91,14 +91,6 @@ func newSelectResult() *SelectResult {
 	}
 }
 
-func (t *Table) SetRecordParser(recParser *tableparser.RecordParser) error {
-	if recParser == nil {
-		return fmt.Errorf("Table.SetRecordParser: recParser cannot be nil")
-	}
-	t.recordParser = recParser
-	return nil
-}
-
 func (t *Table) WriteColumnDefinitions() error {
 	for _, c := range t.ColumnNames {
 		b, err := t.columns[c].MarshalBinary()
@@ -113,47 +105,91 @@ func (t *Table) WriteColumnDefinitions() error {
 	return nil
 }
 
-func NewTable(f *os.File, reader *io3.Reader, columnDefReader *io.ColumnDefinitionReader, parser *tableparser.RecordParser,
-	wal *wal.WAL, idx *index.Index) (*Table, error) {
-	if f == nil || reader == nil || columnDefReader == nil {
+func newTable(f *os.File) (*Table, error) {
+	if f == nil {
 		return nil, fmt.Errorf("NewTable: nil argument")
 	}
 	tableName, err := GetTableName(f)
+	dbPath := GetPath(f)
 	if err != nil {
 		return nil, fmt.Errorf("NewTable: %w", err)
 	}
-	t := &Table{
+
+	walFile, err := wal.NewWal(dbPath, tableName)
+	if err != nil {
+		return nil, platformerror.NewCannotCreateTableError(err, tableName)
+	}
+
+	r := platformio.NewReader(f)
+	columnDefReader := io.NewColumnDefinitionReader(r)
+
+	return &Table{
 		file:            f,
 		Name:            tableName,
 		columns:         make(Columns),
-		reader:          reader,
-		columnDefReader: columnDefReader,
-		recordParser:    parser,
-		wal:             wal,
-		index:           idx,
-		lru:             platform.NewLRU[string, index.Page](10),
-	}
-	return t, nil
-}
-
-func NewTableWithColumns(file *os.File, columns Columns, columnNames []string, r *io3.Reader,
-	columnDefReader *io.ColumnDefinitionReader, parser *tableparser.RecordParser, wal *wal.WAL, idx *index.Index) (*Table, error) {
-	return &Table{
-		file:            file,
-		ColumnNames:     columnNames,
 		reader:          r,
-		columns:         columns,
 		columnDefReader: columnDefReader,
-		recordParser:    parser,
-		wal:             wal,
-		index:           idx,
+		wal:             walFile,
 		lru:             platform.NewLRU[string, index.Page](10),
 	}, nil
 }
 
-func (t *Table) ReadColumnDefinitions() error {
+func (t *Table) initIndexes() {
+	indexes := make(map[string]*index.Index)
+
+	dbPath := GetPath(t.file)
+	tableName, _ := GetTableName(t.file)
+
+	for _, col := range t.columns {
+		if col.Is(column.UsingIndex) {
+			idxName := dbPath + "_" + tableName + "_" + helper.ToString(col.Name[:]) + "_idx.bin"
+			idx := index.NewIndex(idxName, col.IsPrimaryKey || col.Is(column.UsingUniqueIndex))
+			indexes[helper.ToString(col.Name[:])] = idx
+		}
+	}
+	t.indexes = indexes
+}
+
+func NewTable(f *os.File) (*Table, error) {
+	t, err := newTable(f)
+
+	if err != nil {
+		return nil, fmt.Errorf("NewTable: %w", err)
+	}
+
+	err = t.readColumnDefinitions()
+	if err != nil {
+		return nil, fmt.Errorf("NewTable: %w", err)
+	}
+
+	t.recordParser = tableparser.NewRecordParser(f, t.ColumnNames)
+	t.initIndexes()
+
+	return t, nil
+}
+
+func NewTableWithColumns(file *os.File, columns Columns) (*Table, error) {
+	table, err := newTable(file)
+	if err != nil {
+		return nil, fmt.Errorf("NewTable: %w", err)
+	}
+
+	columnNames := make([]string, 0)
+	for _, col := range columns {
+		columnNames = append(columnNames, helper.ToString(col.Name[:]))
+	}
+
+	table.ColumnNames = columnNames
+	table.columns = columns
+
+	table.initIndexes()
+
+	return table, nil
+}
+
+func (t *Table) readColumnDefinitions() error {
 	if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
-		return fmt.Errorf("Table.ReadColumnDefinitions: %w", err)
+		return fmt.Errorf("Table.readColumnDefinitions: %w", err)
 	}
 
 	for {
@@ -163,11 +199,11 @@ func (t *Table) ReadColumnDefinitions() error {
 			if err == stdio.EOF {
 				break
 			}
-			return fmt.Errorf("Table.ReadColumnDefinitions: %w", err)
+			return fmt.Errorf("Table.readColumnDefinitions: %w", err)
 		}
 		col := column.Column{}
 		if err = col.UnmarshalBinary(buf[:n]); err != nil {
-			return fmt.Errorf("Table.ReadColumnDefinitions: %w", err)
+			return fmt.Errorf("Table.readColumnDefinitions: %w", err)
 		}
 		colName := helper.ToString(col.Name[:])
 		t.columns[colName] = &col
@@ -235,7 +271,8 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
-	if err = t.index.Add(record[t.getPrimaryKeyColumnName()], page.StartPos); err != nil {
+	primaryKeyColumnName := t.getPrimaryKeyColumnName()
+	if err = t.indexes[primaryKeyColumnName].Add(record[primaryKeyColumnName], page.StartPos); err != nil {
 		return 0, fmt.Errorf("Table.Insert: %w", err)
 	}
 
@@ -255,7 +292,7 @@ func (t *Table) validateColumns(record tableparser.RecordValue) error {
 			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewUnknownColumnError(col))
 		}
 
-		if !t.columns[col].Opts.AllowNull && val == nil {
+		if !t.columns[col].Is(column.Nullable) && val == nil {
 			return fmt.Errorf("Table.validateColumns: %w", platformerror.NewColumnNotNullableError(col))
 		}
 
@@ -290,13 +327,13 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	selectResult := newSelectResult()
 
 	singleResult := false
-	primaryKeyName := t.getPrimaryKeyColumnName()
+	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 
-	if slices.Contains(filteredColumnNames, primaryKeyName) {
-		id := command.WhereClause[primaryKeyName].Value
-		op := command.WhereClause[primaryKeyName].Operator
+	if slices.Contains(filteredColumnNames, primaryKeyColumnName) {
+		id := command.WhereClause[primaryKeyColumnName].Value
+		op := command.WhereClause[primaryKeyColumnName].Operator
 
-		item, err := t.index.Compare(id, op)
+		item, err := t.indexes[primaryKeyColumnName].Compare(id, op)
 		if err != nil {
 			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
@@ -520,7 +557,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		return nil, fmt.Errorf("Table.Delete: %w", err)
 	}
 	deletableRecords := make([]*DeletableRecord, 0)
-	primaryKeyName := t.getPrimaryKeyColumnName()
+	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 
 	deleteResult := newDeleteResult()
 
@@ -530,9 +567,9 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	}
 
 	for _, row := range selectResult.Rows {
-		id, _ := row[primaryKeyName]
+		id, _ := row[primaryKeyColumnName]
 
-		page, err := t.index.Get(id)
+		page, err := t.indexes[primaryKeyColumnName].Get(id)
 		if err != nil {
 			return nil, platformerror.WrapError(fmt.Errorf("Table.Select: %w", err))
 		}
@@ -578,7 +615,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		ids = append(ids, v.id)
 	}
 
-	if err := t.index.RemoveAll(ids); err != nil {
+	if err := t.indexes[primaryKeyColumnName].RemoveAll(ids); err != nil {
 		return nil, fmt.Errorf("table.delete: %w", err)
 	}
 
@@ -627,6 +664,10 @@ func GetTableName(f *os.File) (string, error) {
 		return "", platformerror.NewInvalidFilename(f.Name())
 	}
 	return filenameParts[len(filenameParts)-1], nil
+}
+
+func GetPath(f *os.File) string {
+	return filepath.Dir(f.Name()) + string(filepath.Separator)
 }
 
 func (t *Table) RestoreWAL() error {
@@ -893,13 +934,15 @@ func (t *Table) removeEmptyPage(page int64) (e error) {
 	return nil
 }
 
-// Close closes the table and the index files
+// Close closes the table and the primaryKeyIndex files
 func (t *Table) Close() error {
 	if err := t.file.Close(); err != nil {
 		return fmt.Errorf("Table.Close: %w", err)
 	}
-	if err := t.index.Close(); err != nil {
-		return fmt.Errorf("Table.Close: %w", err)
+	for _, idx := range t.indexes {
+		if err := idx.Close(); err != nil {
+			return err
+		}
 	}
 	return nil
 }

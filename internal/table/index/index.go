@@ -3,17 +3,19 @@ package index
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"simple-database/internal/platform/datatype"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 	platformparser "simple-database/internal/platform/parser"
 
 	"github.com/guycipher/btree"
 )
 
 type Index struct {
-	btree *btree.BTree
+	btree  *btree.BTree
+	unique bool
 }
 
 type Item struct {
@@ -28,10 +30,10 @@ func NewItem(val any, pagePos int64) *Item {
 	}
 }
 
-func NewIndex(f string) *Index {
+func NewIndex(f string, unique bool) *Index {
 	bt, _ := btree.Open(f, os.O_CREATE|os.O_RDWR, 0644, 3)
 
-	return &Index{btree: bt}
+	return &Index{btree: bt, unique: unique}
 }
 
 func (i *Item) MarshalBinary() ([]byte, error) {
@@ -109,9 +111,13 @@ func (i *Index) Add(val any, pagePos int64) error {
 		return fmt.Errorf("index.Add: %w", err)
 	}
 
-	err = i.btree.Delete(idBuf)
-	if err != nil {
-		return fmt.Errorf("index.Add: %w", err)
+	if i.unique {
+		_, err := i.Get(val)
+
+		var notFoundErr *platformerror.ItemNotFoundError
+		if err != nil && !errors.As(err, &notFoundErr) {
+			return fmt.Errorf("index.Add: %w", err)
+		}
 	}
 
 	err = i.btree.Put(idBuf, itemBuf)
@@ -130,7 +136,10 @@ func (i *Index) Get(val any) (Item, error) {
 
 	key, err := i.btree.Get(valBuf)
 	if err != nil {
-		return Item{}, errors.NewItemNotFoundError(val)
+		return Item{}, fmt.Errorf("index.Get: %w", err)
+	}
+	if key == nil {
+		return Item{}, platformerror.NewItemNotFoundError(val)
 	}
 	item := Item{}
 	// for now only support return one item
@@ -193,17 +202,7 @@ func (i *Index) Compare(val any, op string) (Item, error) {
 	case datatype.OperatorLessOrEqual:
 		keys, err = i.btree.LessThanEq(valBuf)
 	case datatype.OperatorNotEqual:
-		keys = make([]*btree.Key, 0)
-		greaterKeys, err := i.btree.GreaterThan(valBuf)
-		if err != nil {
-			return Item{}, fmt.Errorf("index.Add: %w", err)
-		}
-		lessKeys, err := i.btree.LessThan(valBuf)
-		if err != nil {
-			return Item{}, fmt.Errorf("index.Add: %w", err)
-		}
-		keys = append(keys, greaterKeys...)
-		keys = append(keys, lessKeys...)
+		keys, err = i.btree.NGet(valBuf)
 	default:
 		return Item{}, fmt.Errorf("index.Add: Unknown operator: %s", op)
 	}

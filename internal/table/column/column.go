@@ -10,38 +10,40 @@ const (
 	NameLength byte = 64
 )
 
+const (
+	Nullable int32 = 1 << iota
+	UsingIndex
+	UsingUniqueIndex = UsingIndex | 1<<2
+)
+
 type Column struct {
 	Name         [NameLength]byte
 	DataType     byte
-	Opts         Opts
+	Opts         int32
 	IsPrimaryKey bool
 }
 
-type Opts struct {
-	AllowNull bool
+func (c *Column) Is(flag int32) bool {
+	return c.Opts&flag != 0
 }
 
 func (c *Column) MarshalBinary() ([]byte, error) {
-	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts.AllowNull).MarshalBinary()
+	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts).MarshalBinary()
 }
 
 func (c *Column) UnmarshalBinary(data []byte) error {
-	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts.AllowNull)
+	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts)
 	if err := marshaler.UnmarshalBinary(data); err != nil {
 		return fmt.Errorf("Column.UnmarshalBinary: %w", err)
 	}
 	c.Name = marshaler.Name
 	c.DataType = marshaler.DataType
-	c.Opts.AllowNull = marshaler.AllowNull
+	c.Opts = marshaler.Opts
 	c.IsPrimaryKey = marshaler.IsPrimaryKey
 	return nil
 }
 
-func NewOpts(allowNull bool) Opts {
-	return Opts{AllowNull: allowNull}
-}
-
-func NewColumn(name string, dataType byte, IsPrimaryKey bool, opts Opts) (*Column, error) {
+func NewColumn(name string, dataType byte, IsPrimaryKey bool, opts int32) (*Column, error) {
 	if len(name) > int(NameLength) {
 		return nil, errors.NewNameTooLongError(int(NameLength), len(name))
 	}

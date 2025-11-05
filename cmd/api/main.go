@@ -19,17 +19,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := column.NewColumn("id", datatype.TypeInt64, true, column.NewOpts(false))
+	id, err := column.NewColumn("id", datatype.TypeInt64, true, column.Nullable|column.UsingIndex)
 	if err != nil {
 		log.Fatal(err)
 	}
-	username, err := column.NewColumn("username", datatype.TypeString, false, column.NewOpts(false))
+	username, err := column.NewColumn("username", datatype.TypeString, false, column.Nullable|column.UsingIndex)
 	if err != nil {
 		log.Fatal(err)
 	}
 	_, err = db.CreateTable(
 		"users",
-		[]string{"id", "username"},
 		map[string]*column.Column{
 			"id":       id,
 			"username": username,
@@ -116,9 +115,6 @@ func main() {
 		start = time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < 1000; i++ {
-			if i == 696 {
-				fmt.Printf("Found it\n")
-			}
 			whereClause = make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,

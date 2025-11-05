@@ -6,12 +6,7 @@ import (
 	"path/filepath"
 	errors "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
-	io2 "simple-database/internal/platform/io"
 	"simple-database/internal/table"
-	"simple-database/internal/table/column/io"
-	"simple-database/internal/table/column/parser"
-	"simple-database/internal/table/index"
-	"simple-database/internal/table/wal"
 	"strings"
 )
 
@@ -59,7 +54,7 @@ func NewDatabase(name string) (*Database, error) {
 	return db, nil
 }
 
-func (db *Database) CreateTable(name string, columnNames []string, columns table.Columns) (*table.Table, error) {
+func (db *Database) CreateTable(name string, columns table.Columns) (*table.Table, error) {
 	dbPath := filepath.Join(path(db.name), name) + table.FileExtension
 	if _, err := os.Open(dbPath); err == nil {
 		return nil, errors.NewTableAlreadyExistsError(name)
@@ -73,16 +68,8 @@ func (db *Database) CreateTable(name string, columnNames []string, columns table
 		return nil, errors.WrapError(errors.NewCannotCreateTableError(err, name))
 	}
 
-	r := io2.NewReader(f)
-	walFile, err := wal.NewWal(db.path, name)
-	if err != nil {
-		return nil, errors.NewCannotCreateTableError(err, name)
-	}
+	t, err := table.NewTableWithColumns(f, columns)
 
-	idxFile := filepath.Join(path(db.name), name) + "_idx.bin"
-
-	t, err := table.NewTableWithColumns(f, columns, columnNames, r, io.NewColumnDefinitionReader(r), parser.NewRecordParser(f,
-		columnNames), walFile, index.NewIndex(idxFile))
 	if err != nil {
 		return nil, errors.NewCannotCreateTableError(err, name)
 	}
@@ -118,30 +105,8 @@ func (db *Database) readTables() (Tables, error) {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
 
-		r := io2.NewReader(f)
-		columnDefReader := io.NewColumnDefinitionReader(r)
-		tableName, err := table.GetTableName(f)
+		t, err := table.NewTable(f)
 		if err != nil {
-			return nil, errors.NewCannotCreateTableError(err, v.Name())
-		}
-
-		walFile, err := wal.NewWal(db.path, tableName)
-		if err != nil {
-			return nil, errors.NewCannotCreateTableError(err, v.Name())
-		}
-
-		idxFile := filepath.Join(path(db.name), tableName) + "_idx.bin"
-
-		t, err := table.NewTable(f, r, columnDefReader, nil, walFile, index.NewIndex(idxFile))
-		if err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
-		}
-
-		if err := t.ReadColumnDefinitions(); err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
-		}
-
-		if err = t.SetRecordParser(parser.NewRecordParser(f, t.ColumnNames)); err != nil {
 			return nil, fmt.Errorf("Database.readTables: %w", err)
 		}
 
