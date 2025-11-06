@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
 	"strings"
@@ -24,10 +24,11 @@ type Database struct {
 
 func CreateDatabase(name string) (*Database, error) {
 	if exists(name) {
-		return nil, errors.NewDatabaseAlreadyExistsError(name)
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Database %s already existed", name),
+			platformerror.DatabaseAlreadyExistsErrorCode)
 	}
 	if err := os.MkdirAll(path(name), 0644); err != nil {
-		return nil, fmt.Errorf("CreateDatabase: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 	}
 	return &Database{
 		name:   name,
@@ -38,12 +39,13 @@ func CreateDatabase(name string) (*Database, error) {
 
 func NewDatabase(name string) (*Database, error) {
 	if !exists(name) {
-		return nil, errors.NewDatabaseDoesNotExistError(name)
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Database %s not existed", name),
+			platformerror.DatabaseNotExistsErrorCode)
 	}
 	db := &Database{name: name, path: path(name)}
 	tables, err := db.readTables()
 	if err != nil {
-		return nil, fmt.Errorf("NewDatabase: %w", err)
+		return nil, err
 	}
 	db.Tables = tables
 	for _, t := range db.Tables {
@@ -57,26 +59,27 @@ func NewDatabase(name string) (*Database, error) {
 func (db *Database) CreateTable(name string, columns table.Columns) (*table.Table, error) {
 	dbPath := filepath.Join(path(db.name), name) + table.FileExtension
 	if _, err := os.Open(dbPath); err == nil {
-		return nil, errors.NewTableAlreadyExistsError(name)
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Table %s already existed", name),
+			platformerror.ColumnAlreadyExistsErrorCode)
 	}
 	f, err := os.Create(dbPath)
 	if err != nil {
-		return nil, errors.NewCannotCreateTableError(err, name)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 	}
 
 	if err := validateColumnsConstraint(columns); err != nil {
-		return nil, errors.WrapError(errors.NewCannotCreateTableError(err, name))
+		return nil, err
 	}
 
 	t, err := table.NewTableWithColumns(f, columns)
 
 	if err != nil {
-		return nil, errors.NewCannotCreateTableError(err, name)
+		return nil, err
 	}
 
 	err = t.WriteColumnDefinitions()
 	if err != nil {
-		return nil, errors.NewCannotCreateTableError(err, name)
+		return nil, err
 	}
 	db.Tables[name] = t
 	return t, nil
@@ -85,7 +88,7 @@ func (db *Database) CreateTable(name string, columns table.Columns) (*table.Tabl
 func (db *Database) readTables() (Tables, error) {
 	tablePaths, err := os.ReadDir(path(db.name))
 	if err != nil {
-		return nil, fmt.Errorf("readTables: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 	}
 
 	tables := make([]*table.Table, 0)
@@ -96,18 +99,16 @@ func (db *Database) readTables() (Tables, error) {
 		}
 
 		if _, err := v.Info(); err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 		}
-		f, err := os.OpenFile(
-			filepath.Join(db.path, v.Name()), os.O_RDWR, 0777,
-		)
+		f, err := os.OpenFile(filepath.Join(db.path, v.Name()), os.O_RDWR, 0777)
 		if err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 		}
 
 		t, err := table.NewTable(f)
 		if err != nil {
-			return nil, fmt.Errorf("Database.readTables: %w", err)
+			return nil, err
 		}
 
 		tables = append(tables, t)
@@ -131,17 +132,11 @@ func path(name string) string {
 
 func validateColumnsConstraint(columns table.Columns) error {
 	existedName := make(map[string]any)
-	hasUniquePrimaryKey := false
 
 	for _, c := range columns {
 		if _, existed := existedName[helper.ToString(c.Name[:])]; existed {
-			return fmt.Errorf("duplicate column name: %s", helper.ToString(c.Name[:]))
-		}
-		existedName[helper.ToString(c.Name[:])] = ""
-		if c.IsPrimaryKey && !hasUniquePrimaryKey {
-			hasUniquePrimaryKey = true
-		} else if c.IsPrimaryKey {
-			return fmt.Errorf("duplicate primary key")
+			return platformerror.NewStackTraceError(fmt.Sprintf("Column %s already existed", helper.ToString(c.Name[:])),
+				platformerror.OpenFileErrorCode)
 		}
 	}
 

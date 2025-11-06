@@ -5,7 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"simple-database/internal/platform/datatype"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 )
 
 type ValueMarshaler[T any] struct {
@@ -17,11 +17,11 @@ func (m *ValueMarshaler[T]) marshalBinary(order binary.ByteOrder) ([]byte, error
 	switch v := any(m.Value).(type) {
 	case string:
 		if err := binary.Write(&buf, order, []byte(v)); err != nil {
-			return nil, fmt.Errorf("ValueMarshaler.MarshalBinary: %w", err)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 		}
 	default:
 		if err := binary.Write(&buf, order, m.Value); err != nil {
-			return nil, fmt.Errorf("ValueMarshaler.MarshalBinary: %w", err)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 		}
 	}
 	return buf.Bytes(), nil
@@ -47,7 +47,7 @@ func (u *ValueUnmarshaler[T]) UnmarshalBinary(data []byte) error {
 	default:
 		err := binary.Read(bytes.NewBuffer(data), binary.LittleEndian, &value)
 		if err != nil {
-			return fmt.Errorf("ValueUnmarshaler.UnmarshalBinary: %w", err)
+			return platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
 		}
 	}
 	u.Value = value
@@ -72,7 +72,7 @@ func (m *TLVMarshaler[T]) dataLength() (uint32, error) {
 	case string:
 		return uint32(len(v)), nil
 	default:
-		return 0, &errors.UnsupportedDataTypeError{DataType: fmt.Sprintf("%T", v)}
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Uknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -88,15 +88,15 @@ func (m *TLVMarshaler[T]) MarshalBinary() ([]byte, error) {
 	}
 	// datatype
 	if err := binary.Write(&buf, binary.LittleEndian, typeFlag); err != nil {
-		return nil, fmt.Errorf("TLVMarshaler.MarshalBinary: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 	// length
 	if err := binary.Write(&buf, binary.LittleEndian, length); err != nil {
-		return nil, fmt.Errorf("TLVMarshaler.MarshalBinary: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 	valueBuf, err := m.ValueMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("TLVMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(valueBuf)
 	return buf.Bytes(), nil
@@ -115,7 +115,7 @@ func (m *TLVMarshaler[T]) typeFlag() (byte, error) {
 	case string:
 		return datatype.TypeString, nil
 	default:
-		return 0, &errors.UnsupportedDataTypeError{DataType: fmt.Sprintf("%T", v)}
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -132,7 +132,7 @@ func (m *TLVMarshaler[T]) TLVLength() (uint32, error) {
 	case string:
 		return datatype.LenMeta + uint32(len(v)), nil
 	default:
-		return 0, errors.WrapError(&errors.UnsupportedDataTypeError{DataType: fmt.Sprintf("%T", v)})
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -160,19 +160,19 @@ func (u *TLVUnmarshaler[T]) UnmarshalBinary(data []byte) error {
 	intUnmarshaler := NewValueUnmarshaler[uint32]()
 	// datatype
 	if err := byteUnmarshaler.UnmarshalBinary(data); err != nil {
-		return fmt.Errorf("TLVUnmarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	u.dataType = byteUnmarshaler.Value
 	u.BytesRead += datatype.LenByte
 	// length
 	if err := intUnmarshaler.UnmarshalBinary(data[u.BytesRead:]); err != nil {
-		return fmt.Errorf("TLVUnmarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	u.length = intUnmarshaler.Value
 	u.BytesRead += datatype.LenInt32
 	// value
 	if err := u.unmarshaler.UnmarshalBinary(data[u.BytesRead:]); err != nil {
-		return fmt.Errorf("TLVUnmarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	u.Value = u.unmarshaler.Value
 	u.BytesRead += u.length

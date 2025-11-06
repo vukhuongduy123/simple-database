@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 	"simple-database/internal/platform/datatype"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 )
 
 type Reader struct {
@@ -26,7 +26,7 @@ func (r *Reader) Read(b []byte) (int, error) {
 		return 0, err
 	}
 	if n != len(b) {
-		return n, errors.NewIncompleteReadError(len(b), n)
+		return n, platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, get %d", len(b), n), platformerror.IncompleteReadErrorCode)
 	}
 	return n, nil
 }
@@ -34,7 +34,7 @@ func (r *Reader) Read(b []byte) (int, error) {
 func (r *Reader) ReadUint32() (uint32, error) {
 	buf := make([]byte, datatype.LenInt32)
 	if _, err := r.Read(buf); err != nil {
-		return 0, err
+		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.IncompleteReadErrorCode)
 	}
 	return binary.LittleEndian.Uint32(buf), nil
 }

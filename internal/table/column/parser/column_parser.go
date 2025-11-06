@@ -35,42 +35,42 @@ func (c *ColumnDefinitionMarshaler) MarshalBinary() ([]byte, error) {
 	typeFlag := parser.NewValueMarshaler[byte](datatype.TypeColumnDefinition)
 	b, err := typeFlag.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
 	length := parser.NewValueMarshaler[uint32](c.Size())
 	b, err = length.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
 	name := parser.NewTLVMarshaler[string](string(c.Name[:]))
 	b, err = name.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
 	dataType := parser.NewTLVMarshaler[byte](c.DataType)
 	b, err = dataType.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
 	opts := parser.NewTLVMarshaler[int32](c.Opts)
 	b, err = opts.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
 	isPrimaryKey := parser.NewTLVMarshaler[bool](c.IsPrimaryKey)
 	b, err = isPrimaryKey.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("ColumnDefinitionMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(b)
 
@@ -85,7 +85,7 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 	int32UnmarshalBinary := parser.NewValueUnmarshaler[int32]()
 
 	if err := byteUnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+datatype.LenByte]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 
 	typeFlag := byteUnmarshalBinary.Value
@@ -96,35 +96,35 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 	readBytes += datatype.LenByte
 
 	if err := uint32UnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+datatype.LenInt32]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 
 	readBytes += datatype.LenInt32
 
 	nameUnmarshaler := parser.NewTLVUnmarshaler[string](parser.NewValueUnmarshaler[string]())
 	if err := nameUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	name := nameUnmarshaler.Value
 	readBytes += nameUnmarshaler.BytesRead
 
 	dataTypeUnmarshaler := parser.NewTLVUnmarshaler[byte](byteUnmarshalBinary)
 	if err := dataTypeUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	readBytes += dataTypeUnmarshaler.BytesRead
 	dataType := dataTypeUnmarshaler.Value
 
 	optsUnmarshaler := parser.NewTLVUnmarshaler[int32](int32UnmarshalBinary)
 	if err := optsUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	readBytes += optsUnmarshaler.BytesRead
 	opts := optsUnmarshaler.Value
 
 	isPrimaryKeyUnmarshaler := parser.NewTLVUnmarshaler[byte](byteUnmarshalBinary)
 	if err := isPrimaryKeyUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: %w", err)
+		return err
 	}
 	readBytes += isPrimaryKeyUnmarshaler.BytesRead
 	isPrimaryKey := isPrimaryKeyUnmarshaler.Value

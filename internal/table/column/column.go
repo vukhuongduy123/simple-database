@@ -2,7 +2,7 @@ package column
 
 import (
 	"fmt"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/table/column/parser"
 )
 
@@ -45,7 +45,8 @@ func (c *Column) UnmarshalBinary(data []byte) error {
 
 func NewColumn(name string, dataType byte, IsPrimaryKey bool, opts int32) (*Column, error) {
 	if len(name) > int(NameLength) {
-		return nil, errors.NewNameTooLongError(int(NameLength), len(name))
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Expected name length %d, got %d", int(NameLength), len(name)),
+			platformerror.InvalidNameLengthErrorCode)
 	}
 	col := &Column{
 		DataType:     dataType,

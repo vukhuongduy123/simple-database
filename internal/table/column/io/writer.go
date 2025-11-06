@@ -3,7 +3,7 @@ package io
 import (
 	"fmt"
 	"io"
-	errors "simple-database/internal/platform/error"
+	platformerror "simple-database/internal/platform/error"
 )
 
 type ColumnDefinitionWriter struct {
@@ -16,9 +16,7 @@ func (c *ColumnDefinitionWriter) Write(data []byte) (int, error) {
 		return n, fmt.Errorf("ColumneDefinitionWriter.Write: %w", err)
 	}
 	if n != len(data) {
-		return n, fmt.Errorf(
-			"ColumnDefinitionWriter.Write: %w", errors.NewIncompleteWriteError(n, len(data)),
-		)
+		return n, platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, get %d", len(data), n), platformerror.IncompleteWriteErrorCode)
 	}
 	return n, nil
 }

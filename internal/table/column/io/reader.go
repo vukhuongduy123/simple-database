@@ -4,8 +4,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	io2 "io"
+	stdio "io"
 	"simple-database/internal/platform/datatype"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
 )
 
@@ -23,13 +24,13 @@ func (r *ColumnDefinitionReader) Read(b []byte) (int, error) {
 	buf := bytes.Buffer{}
 	dataType, err := r.reader.ReadByte()
 	if err != nil {
-		if err == io2.EOF {
-			return buf.Len(), io2.EOF
+		if err == stdio.EOF {
+			return buf.Len(), stdio.EOF
 		}
-		return 0, fmt.Errorf("ColumnDefinitionReader.Read: data datatype: %w", err)
+		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
 	}
 	if dataType != datatype.TypeColumnDefinition {
-		return buf.Len(), io2.EOF
+		return buf.Len(), stdio.EOF
 	}
 	buf.WriteByte(dataType)
 

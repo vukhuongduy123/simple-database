@@ -3,7 +3,6 @@ package index
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"os"
 	"simple-database/internal/platform/datatype"
@@ -35,6 +34,10 @@ func NewIndex(f string, unique bool) *Index {
 
 	return &Index{btree: bt, unique: unique}
 }
+
+var EmptyItem = Item{val: -1, PagePos: -1}
+
+var ErrorItem = Item{val: -2, PagePos: -2}
 
 func (i *Item) MarshalBinary() ([]byte, error) {
 	buf := bytes.Buffer{}
@@ -112,11 +115,14 @@ func (i *Index) Add(val any, pagePos int64) error {
 	}
 
 	if i.unique {
-		_, err := i.Get(val)
+		item, err := i.Get(val)
 
-		var notFoundErr *platformerror.ItemNotFoundError
-		if err != nil && !errors.As(err, &notFoundErr) {
-			return fmt.Errorf("index.Add: %w", err)
+		if err != nil {
+			return err
+		}
+
+		if item != EmptyItem {
+			return platformerror.NewStackTraceError(fmt.Sprintf("Unique key validate with value: %v", val), platformerror.UniqueKeyViolationErrorCode)
 		}
 	}
 
@@ -131,21 +137,21 @@ func (i *Index) Get(val any) (Item, error) {
 	marshaler := platformparser.NewValueMarshaler[any](val)
 	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Add: %w", err)
+		return Item{}, err
 	}
 
 	key, err := i.btree.Get(valBuf)
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Get: %w", err)
+		return ErrorItem, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
 	}
 	if key == nil {
-		return Item{}, platformerror.NewItemNotFoundError(val)
+		return EmptyItem, nil
 	}
 	item := Item{}
 	// for now only support return one item
 	err = item.UnmarshalBinary(key.V[0])
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Add: %w", err)
+		return ErrorItem, err
 	}
 
 	return item, nil
@@ -159,7 +165,7 @@ func (i *Index) Remove(val any) error {
 	marshaler := platformparser.NewValueMarshaler[any](val)
 	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
-		return fmt.Errorf("index.Add: %w", err)
+		return err
 	}
 	err = i.btree.Delete(idBuf)
 	if err != nil {
@@ -183,7 +189,7 @@ func (i *Index) Compare(val any, op string) (Item, error) {
 	marshaler := platformparser.NewValueMarshaler[any](val)
 	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Add: %w", err)
+		return ErrorItem, err
 	}
 
 	item := Item{}
@@ -204,16 +210,20 @@ func (i *Index) Compare(val any, op string) (Item, error) {
 	case datatype.OperatorNotEqual:
 		keys, err = i.btree.NGet(valBuf)
 	default:
-		return Item{}, fmt.Errorf("index.Add: Unknown operator: %s", op)
+		return ErrorItem, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
 	}
 
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Add: %w", err)
+		return ErrorItem, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
+	}
+
+	if keys == nil {
+		return EmptyItem, nil
 	}
 
 	err = item.UnmarshalBinary(keys[0].V[0])
 	if err != nil {
-		return Item{}, fmt.Errorf("index.Add: %w", err)
+		return ErrorItem, err
 	}
 	return item, nil
 }

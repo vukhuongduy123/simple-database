@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"simple-database/internal/platform/datatype"
-	error2 "simple-database/internal/platform/error"
 	"simple-database/internal/platform/parser"
 )
 
@@ -70,39 +69,39 @@ func (m *WALMarshaler) MarshalBinary() ([]byte, error) {
 	typeMarshaler := parser.NewValueMarshaler(datatype.TypeWALEntry)
 	typeBuf, err := typeMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	buf.Write(typeBuf)
 
 	length, err := m.len()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	lenMarshaler := parser.NewValueMarshaler(length)
 	lenBuf, err := lenMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	buf.Write(lenBuf)
 
 	idMarshaler := parser.NewTLVMarshaler(m.ID)
 	idBuf, err := idMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	buf.Write(idBuf)
 
 	tableMarshaler := parser.NewTLVMarshaler(m.Table)
 	tableBuf, err := tableMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	buf.Write(tableBuf)
 
 	opMarshaler := parser.NewTLVMarshaler(m.Op)
 	opBuf, err := opMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, error2.WrapError(fmt.Errorf("WALMarshaler.MarshalBinary: %w", err))
+		return nil, err
 	}
 	buf.Write(opBuf)
 
