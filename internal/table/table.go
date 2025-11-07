@@ -30,6 +30,7 @@ const FileExtension = ".bin"
 const PageSize = 4096
 
 var lastPagePos int64 = -1
+var pageRegionPos int64 = -1
 
 type Table struct {
 	Name            string
@@ -361,7 +362,7 @@ func (t *Table) getUsingIndexColumn(filteredColumnNames []string) (string, bool)
 }
 
 func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
-	if err := t.ensureFilePointer(); err != nil {
+	if err := t.moveToPageRegion(); err != nil {
 		return nil, err
 	}
 
@@ -444,16 +445,21 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	}
 }
 
-func (t *Table) ensureFilePointer() error {
-	if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-	}
-	if err := t.seekUntil(datatype.TypeRecord); err != nil {
-		if err == stdio.EOF {
+func (t *Table) moveToPageRegion() error {
+	if pageRegionPos == -1 {
+		if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		}
+		if err := t.seekUntil(datatype.TypePage); err != nil {
 			return err
 		}
-		return err
+		pageRegionPos, _ = t.file.Seek(0, stdio.SeekCurrent)
+	} else {
+		if _, err := t.file.Seek(pageRegionPos, stdio.SeekStart); err != nil {
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		}
 	}
+
 	return nil
 }
 
@@ -600,7 +606,7 @@ func newDeleteResult() *DeleteResult {
 }
 
 func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
-	if err := t.ensureFilePointer(); err != nil {
+	if err := t.moveToPageRegion(); err != nil {
 		return nil, err
 	}
 	if err := t.validateColumnNames(command.FilteredColumnNames()); err != nil {
@@ -676,9 +682,6 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 }
 
 func (t *Table) Update(command SelectCommand, record tableparser.RecordValue) (int, error) {
-	if err := t.ensureFilePointer(); err != nil {
-		return 0, err
-	}
 	if err := t.validateColumns(record); err != nil {
 		return 0, err
 	}
