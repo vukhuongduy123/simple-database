@@ -30,6 +30,9 @@ const (
 	DatabaseNotExistsErrorCode
 	TableAlreadyExistsErrorCode
 	ColumnAlreadyExistsErrorCode
+	CloseErrorCode
+	InvalidNumberOfPrimaryKeysErrorCode
+	UniqueIndexViolationErrorCode
 )
 
 // StackTraceError wraps any error and captures a stack trace

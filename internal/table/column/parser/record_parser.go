@@ -5,6 +5,7 @@ import (
 	"fmt"
 	stdio "io"
 	"simple-database/internal/platform/datatype"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
 	"simple-database/internal/platform/parser"
 )
@@ -51,15 +52,15 @@ func (r *RecordParser) skipDeletedRecords() error {
 			if err == stdio.EOF {
 				return err
 			}
-			return fmt.Errorf("RecordParser.Parse: %w", err)
+			return err
 		}
 		if t == datatype.TypeDeletedRecord {
 			l, err := r.reader.ReadUint32()
 			if err != nil {
-				return fmt.Errorf("RecordParser.Parse: %w", err)
+				return err
 			}
 			if _, err = r.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
-				return fmt.Errorf("RecordParser.Parse: %w", err)
+				return err
 			}
 		}
 		if t == datatype.TypeRecord {
@@ -79,7 +80,7 @@ func (r *RecordParser) Parse() error {
 		if err == stdio.EOF {
 			return err
 		}
-		return fmt.Errorf("RecordParser.Parse: %w", err)
+		return err
 	}
 
 	if t == datatype.TypePage {
@@ -90,26 +91,27 @@ func (r *RecordParser) Parse() error {
 	}
 
 	if t != datatype.TypeRecord && t != datatype.TypeDeletedRecord {
-		return fmt.Errorf("RecordParser.Parse: file offset needs to point at a record definition")
+		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %v or %v, got %v", datatype.TypeRecord, datatype.TypeDeletedRecord,
+			t), platformerror.InvalidDataTypeErrorCode)
 	}
 
 	if t == datatype.TypeDeletedRecord {
 		if _, err := r.file.Seek(-1*datatype.LenByte, stdio.SeekCurrent); err != nil {
-			return fmt.Errorf("RecordParser.Parse: %w", err)
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
 		}
 		err = r.skipDeletedRecords()
 		if err != nil {
 			if err == stdio.EOF {
 				return err
 			}
-			return fmt.Errorf("RecordParser.Parse: %w", err)
+			return err
 		}
 	}
 
 	record := make(map[string]interface{})
 	recordLength, err := read.ReadUint32()
 	if err != nil {
-		return fmt.Errorf("RecordParser.Parse: %w", err)
+		return err
 	}
 
 	for i := 0; i < len(r.columns); i++ {
@@ -120,7 +122,7 @@ func (r *RecordParser) Parse() error {
 			return nil
 		}
 		if err != nil {
-			return fmt.Errorf("RecordParser.Parse: %w", err)
+			return err
 		}
 		record[r.columns[i]] = value
 	}

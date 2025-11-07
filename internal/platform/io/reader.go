@@ -19,7 +19,7 @@ func NewReader(reader io.Reader) *Reader {
 
 func (r *Reader) Read(b []byte) (int, error) {
 	if b == nil {
-		return 0, fmt.Errorf("Reader.Read: nil buffer given")
+		return 0, platformerror.NewStackTraceError("Nil buffer given", platformerror.BinaryReadErrorCode)
 	}
 	n, err := r.reader.Read(b)
 	if err != nil {
@@ -51,19 +51,19 @@ func (r *Reader) ReadTLV() ([]byte, error) {
 	buf := bytes.Buffer{}
 	dataType, err := r.ReadByte()
 	if err != nil {
-		return nil, fmt.Errorf("Reader.ReadTLV: dataType: %w", err)
+		return nil, err
 	}
 	buf.WriteByte(dataType)
 	length, err := r.ReadUint32()
 	if err != nil {
-		return nil, fmt.Errorf("Reader.ReadTLV: len: %w", err)
+		return nil, err
 	}
 	if err = binary.Write(&buf, binary.LittleEndian, length); err != nil {
-		return nil, fmt.Errorf("Reader.ReadTLV: len: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
 	}
 	valBuf := make([]byte, length)
 	if _, err := r.Read(valBuf); err != nil {
-		return nil, fmt.Errorf("Reader.ReadTLV: val: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
 	}
 	buf.Write(valBuf)
 	return buf.Bytes(), nil

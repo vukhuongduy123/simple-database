@@ -2,7 +2,6 @@ package parser
 
 import (
 	"bytes"
-	"fmt"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/parser"
 )
@@ -49,14 +48,14 @@ func (m *WALLastCommitedMarshaler) MarshalBinary() ([]byte, error) {
 	idMarshaler := parser.NewTLVMarshaler(m.ID)
 	idBuf, err := idMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("WALLastCommitedMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 	buf.Write(idBuf)
 
 	lengthMarshaler := parser.NewValueMarshaler(m.Len)
 	lengthBuf, err := lengthMarshaler.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("WALLastCommitedMarshaler.MarshalBinary: %w", err)
+		return nil, err
 	}
 
 	buf.Write(lengthBuf)
@@ -123,20 +122,20 @@ func (u *WALLastCommitedUnmarshaler) UnmarshalBinary(data []byte) error {
 
 	// type
 	if err := byteUnmarshaler.UnmarshalBinary(data); err != nil {
-		return fmt.Errorf("LastCommitUnmarshaler.UnmarshalBinary: type: %w", err)
+		return err
 	}
 	bytesRead += datatype.LenByte
 
 	// len
 	if err := intUnmarshaler.UnmarshalBinary(data[bytesRead:]); err != nil {
-		return fmt.Errorf("LastCommitUnmarshaler.UnmarshalBinary: len: %w", err)
+		return err
 	}
 	bytesRead += datatype.LenInt32
 
 	// ID
 	idUnmarshaler := parser.NewTLVUnmarshaler(strUnmarshaler)
 	if err := idUnmarshaler.UnmarshalBinary(data[bytesRead:]); err != nil {
-		return fmt.Errorf("LastCommitUnmarshaler.UnmarshalBinary: ID: %w", err)
+		return err
 	}
 	u.ID = idUnmarshaler.Value
 	bytesRead += idUnmarshaler.BytesRead
@@ -144,7 +143,7 @@ func (u *WALLastCommitedUnmarshaler) UnmarshalBinary(data []byte) error {
 	intUnmarshaler = parser.NewValueUnmarshaler[uint32]()
 	lenUnmarshaler := parser.NewTLVUnmarshaler(intUnmarshaler)
 	if err := lenUnmarshaler.UnmarshalBinary(data[bytesRead:]); err != nil {
-		return fmt.Errorf("LastCommitUnmarshaler.UnmarshalBinary: len of last record: %w", err)
+		return err
 	}
 	u.Len = lenUnmarshaler.Value
 	bytesRead += lenUnmarshaler.BytesRead
@@ -159,15 +158,15 @@ func (m *WALMarshaler) len() (uint32, error) {
 
 	idLength, err := idMarshaler.TLVLength()
 	if err != nil {
-		return 0, fmt.Errorf("WALMarshaler.len: %w", err)
+		return 0, err
 	}
 	opLength, err := opMarshaler.TLVLength()
 	if err != nil {
-		return 0, fmt.Errorf("WALMarshaler.len: %w", err)
+		return 0, err
 	}
 	tableLength, err := tableMarshaler.TLVLength()
 	if err != nil {
-		return 0, fmt.Errorf("WALMarshaler.len: %w", err)
+		return 0, err
 	}
 
 	return idLength + opLength + tableLength + uint32(len(m.Data)), nil

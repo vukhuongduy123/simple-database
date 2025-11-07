@@ -13,7 +13,7 @@ type ColumnDefinitionWriter struct {
 func (c *ColumnDefinitionWriter) Write(data []byte) (int, error) {
 	n, err := c.w.Write(data)
 	if err != nil {
-		return n, fmt.Errorf("ColumneDefinitionWriter.Write: %w", err)
+		return n, platformerror.NewStackTraceError(err.Error(), platformerror.IncompleteWriteErrorCode)
 	}
 	if n != len(data) {
 		return n, platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, get %d", len(data), n), platformerror.IncompleteWriteErrorCode)

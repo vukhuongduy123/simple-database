@@ -7,6 +7,7 @@ import (
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
+	"simple-database/internal/table/column"
 	"strings"
 )
 
@@ -50,7 +51,7 @@ func NewDatabase(name string) (*Database, error) {
 	db.Tables = tables
 	for _, t := range db.Tables {
 		if err := t.RestoreWAL(); err != nil {
-			return nil, fmt.Errorf("NewDatabase: %w", err)
+			return nil, err
 		}
 	}
 	return db, nil
@@ -60,7 +61,7 @@ func (db *Database) CreateTable(name string, columns table.Columns) (*table.Tabl
 	dbPath := filepath.Join(path(db.name), name) + table.FileExtension
 	if _, err := os.Open(dbPath); err == nil {
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Table %s already existed", name),
-			platformerror.ColumnAlreadyExistsErrorCode)
+			platformerror.TableAlreadyExistsErrorCode)
 	}
 	f, err := os.Create(dbPath)
 	if err != nil {
@@ -77,10 +78,6 @@ func (db *Database) CreateTable(name string, columns table.Columns) (*table.Tabl
 		return nil, err
 	}
 
-	err = t.WriteColumnDefinitions()
-	if err != nil {
-		return nil, err
-	}
 	db.Tables[name] = t
 	return t, nil
 }
@@ -133,11 +130,26 @@ func path(name string) string {
 func validateColumnsConstraint(columns table.Columns) error {
 	existedName := make(map[string]any)
 
+	numberOfPrimaryKeys := 0
+
 	for _, c := range columns {
 		if _, existed := existedName[helper.ToString(c.Name[:])]; existed {
 			return platformerror.NewStackTraceError(fmt.Sprintf("Column %s already existed", helper.ToString(c.Name[:])),
-				platformerror.OpenFileErrorCode)
+				platformerror.ColumnAlreadyExistsErrorCode)
 		}
+
+		if c.Is(column.PrimaryKey) == true {
+			numberOfPrimaryKeys++
+			if numberOfPrimaryKeys > 1 {
+				return platformerror.NewStackTraceError("There are more than one primary key exist",
+					platformerror.InvalidNumberOfPrimaryKeysErrorCode)
+			}
+		}
+	}
+
+	if numberOfPrimaryKeys == 0 {
+		return platformerror.NewStackTraceError("There must be one primary key exist",
+			platformerror.InvalidNumberOfPrimaryKeysErrorCode)
 	}
 
 	return nil

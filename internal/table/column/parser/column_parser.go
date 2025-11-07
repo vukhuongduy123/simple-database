@@ -5,14 +5,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"simple-database/internal/platform/datatype"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/parser"
 )
 
 type ColumnDefinitionMarshaler struct {
-	Name         [64]byte
-	DataType     byte
-	Opts         int32
-	IsPrimaryKey bool
+	Name     [64]byte
+	DataType byte
+	Opts     int32
 }
 
 func (c *ColumnDefinitionMarshaler) Size() uint32 {
@@ -22,12 +22,9 @@ func (c *ColumnDefinitionMarshaler) Size() uint32 {
 		datatype.LenByte + // datatype of data datatype
 		datatype.LenInt32 + // len of data datatype
 		uint32(binary.Size(c.DataType)) + // value of data datatype
-		datatype.LenByte + // datatype of allow_null
-		datatype.LenInt32 + // len of allow_null
-		uint32(binary.Size(c.Opts)) + // value of allow_null
-		datatype.LenByte + // datatype of is_primary_key
-		datatype.LenInt32 + // len of is_primary_key
-		uint32(binary.Size(c.IsPrimaryKey)) // value of is_primary_key
+		datatype.LenByte + // datatype of opts
+		datatype.LenInt32 + // len of opts
+		uint32(binary.Size(c.Opts))
 }
 
 func (c *ColumnDefinitionMarshaler) MarshalBinary() ([]byte, error) {
@@ -67,13 +64,6 @@ func (c *ColumnDefinitionMarshaler) MarshalBinary() ([]byte, error) {
 	}
 	buf.Write(b)
 
-	isPrimaryKey := parser.NewTLVMarshaler[bool](c.IsPrimaryKey)
-	b, err = isPrimaryKey.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	buf.Write(b)
-
 	return buf.Bytes(), nil
 }
 
@@ -90,7 +80,8 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 
 	typeFlag := byteUnmarshalBinary.Value
 	if typeFlag != datatype.TypeColumnDefinition {
-		return fmt.Errorf("ColumnDefinitionMarshaler.UnmarshalBinary: not column datatype %b", typeFlag)
+		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %v, got %v", datatype.TypeColumnDefinition, typeFlag),
+			platformerror.InvalidDataTypeErrorCode)
 	}
 
 	readBytes += datatype.LenByte
@@ -122,26 +113,17 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 	readBytes += optsUnmarshaler.BytesRead
 	opts := optsUnmarshaler.Value
 
-	isPrimaryKeyUnmarshaler := parser.NewTLVUnmarshaler[byte](byteUnmarshalBinary)
-	if err := isPrimaryKeyUnmarshaler.UnmarshalBinary(data[readBytes:]); err != nil {
-		return err
-	}
-	readBytes += isPrimaryKeyUnmarshaler.BytesRead
-	isPrimaryKey := isPrimaryKeyUnmarshaler.Value
-
 	copy(c.Name[:], name)
 	c.DataType = dataType
 	c.Opts = opts
-	c.IsPrimaryKey = isPrimaryKey != 0
 
 	return nil
 }
 
-func NewColumnDefinitionMarshaler(name [64]byte, dataType byte, isPrimaryKey bool, opts int32) *ColumnDefinitionMarshaler {
+func NewColumnDefinitionMarshaler(name [64]byte, dataType byte, opts int32) *ColumnDefinitionMarshaler {
 	return &ColumnDefinitionMarshaler{
-		Name:         name,
-		DataType:     dataType,
-		IsPrimaryKey: isPrimaryKey,
-		Opts:         opts,
+		Name:     name,
+		DataType: dataType,
+		Opts:     opts,
 	}
 }

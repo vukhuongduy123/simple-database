@@ -3,6 +3,7 @@ package parser
 import (
 	"fmt"
 	"simple-database/internal/platform/datatype"
+	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
 )
 
@@ -19,7 +20,7 @@ func NewTLVParser(reader *io.Reader) *TLVParser {
 func (p *TLVParser) Parse() (interface{}, error) {
 	data, err := p.reader.ReadTLV()
 	if err != nil {
-		return fmt.Errorf("TLVParser.Parse: %w", err), nil
+		return nil, err
 	}
 
 	switch data[0] {
@@ -34,13 +35,13 @@ func (p *TLVParser) Parse() (interface{}, error) {
 	case datatype.TypeString:
 		return unmarshalValue[string](data)
 	}
-	return nil, fmt.Errorf("TLVParser.Parse: unknown type: %d", data[0])
+	return nil, platformerror.NewStackTraceError(fmt.Sprintf("TLVParser.Parse: unknown type: %d", data[0]), platformerror.UnknownDatatypeErrorCode)
 }
 
 func unmarshalValue[T any](data []byte) (interface{}, error) {
 	tlvUnmarshaler := NewTLVUnmarshaler(NewValueUnmarshaler[T]())
 	if err := tlvUnmarshaler.UnmarshalBinary(data); err != nil {
-		return nil, fmt.Errorf("parser.unmarshalValue: %w", err)
+		return nil, err
 	}
 	return tlvUnmarshaler.Value, nil
 }

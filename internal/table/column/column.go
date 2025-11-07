@@ -11,47 +11,44 @@ const (
 )
 
 const (
-	Nullable int32 = 1 << iota
-	UsingIndex
-	UsingUniqueIndex = UsingIndex | 1<<2
+	UsingIndex       = 1 << iota
+	UsingUniqueIndex = UsingIndex | 1<<(iota)
+	PrimaryKey       = UsingUniqueIndex | 1<<(iota)
 )
 
 type Column struct {
-	Name         [NameLength]byte
-	DataType     byte
-	Opts         int32
-	IsPrimaryKey bool
+	Name     [NameLength]byte
+	DataType byte
+	Opts     int32
 }
 
 func (c *Column) Is(flag int32) bool {
-	return c.Opts&flag != 0
+	return c.Opts&flag == flag
 }
 
 func (c *Column) MarshalBinary() ([]byte, error) {
-	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts).MarshalBinary()
+	return parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts).MarshalBinary()
 }
 
 func (c *Column) UnmarshalBinary(data []byte) error {
-	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.IsPrimaryKey, c.Opts)
+	marshaler := parser.NewColumnDefinitionMarshaler(c.Name, c.DataType, c.Opts)
 	if err := marshaler.UnmarshalBinary(data); err != nil {
-		return fmt.Errorf("Column.UnmarshalBinary: %w", err)
+		return err
 	}
 	c.Name = marshaler.Name
 	c.DataType = marshaler.DataType
 	c.Opts = marshaler.Opts
-	c.IsPrimaryKey = marshaler.IsPrimaryKey
 	return nil
 }
 
-func NewColumn(name string, dataType byte, IsPrimaryKey bool, opts int32) (*Column, error) {
+func NewColumn(name string, dataType byte, opts int32) (*Column, error) {
 	if len(name) > int(NameLength) {
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Expected name length %d, got %d", int(NameLength), len(name)),
 			platformerror.InvalidNameLengthErrorCode)
 	}
 	col := &Column{
-		DataType:     dataType,
-		IsPrimaryKey: IsPrimaryKey,
-		Opts:         opts,
+		DataType: dataType,
+		Opts:     opts,
 	}
 	copy(col.Name[:], name)
 	return col, nil

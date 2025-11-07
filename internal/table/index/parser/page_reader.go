@@ -34,7 +34,7 @@ func (r *PageReader) Read(b []byte) (int, error) {
 	}
 	length, err := r.reader.ReadUint32()
 	if err != nil {
-		return 0, fmt.Errorf("PageReader.Read: %w", err)
+		return 0, err
 	}
 
 	val := make([]byte, length)

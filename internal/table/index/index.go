@@ -43,24 +43,24 @@ func (i *Item) MarshalBinary() ([]byte, error) {
 	buf := bytes.Buffer{}
 	// type
 	if err := binary.Write(&buf, binary.LittleEndian, datatype.TypeIndexItem); err != nil {
-		return nil, fmt.Errorf("Item.MarshalBinary: type: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 	// len
 	if err := binary.Write(&buf, binary.LittleEndian, uint32(2*(datatype.LenInt64+datatype.LenMeta))); err != nil {
-		return nil, fmt.Errorf("Item.MarshalBinary: len: %w", err)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 
 	valTLV := platformparser.NewTLVMarshaler(i.val)
 	valBuf, err := valTLV.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("Item.MarshalBinary: ID TLV: %w", err)
+		return nil, err
 	}
 	buf.Write(valBuf)
 
 	pagePosTLV := platformparser.NewTLVMarshaler(i.PagePos)
 	pagePosBuf, err := pagePosTLV.MarshalBinary()
 	if err != nil {
-		return nil, fmt.Errorf("Item.MarshalBinary: page pos: %w", err)
+		return nil, err
 	}
 	buf.Write(pagePosBuf)
 	return buf.Bytes(), nil
@@ -75,19 +75,19 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 
 	// type
 	if err := byteUnmarshaler.UnmarshalBinary(buf); err != nil {
-		return fmt.Errorf("Item.MarshalBinary: type: %w", err)
+		return err
 	}
 	n += datatype.LenByte
 
 	// len
 	if err := int32Unmarshaler.UnmarshalBinary(buf[n:]); err != nil {
-		return fmt.Errorf("Item.MarshalBinary: len: %w", err)
+		return err
 	}
 	n += datatype.LenInt32
 
 	valTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
 	if err := valTLV.UnmarshalBinary(buf[n:]); err != nil {
-		return fmt.Errorf("Item.MarshalBinary: val: %w", err)
+		return err
 	}
 
 	i.val = valTLV.Value
@@ -95,7 +95,7 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 
 	pagePosTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
 	if err := pagePosTLV.UnmarshalBinary(buf[n:]); err != nil {
-		return fmt.Errorf("Item.MarshalBinary: page pos: %w", err)
+		return err
 	}
 	i.PagePos = pagePosTLV.Value
 	n += int(pagePosTLV.BytesRead)
@@ -106,12 +106,12 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 func (i *Index) Add(val any, pagePos int64) error {
 	itemBuf, err := NewItem(val, pagePos).MarshalBinary()
 	if err != nil {
-		return fmt.Errorf("index.Add: %w", err)
+		return err
 	}
 	marshaler := platformparser.NewValueMarshaler[any](val)
 	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
-		return fmt.Errorf("index.Add: %w", err)
+		return err
 	}
 
 	if i.unique {
@@ -128,7 +128,7 @@ func (i *Index) Add(val any, pagePos int64) error {
 
 	err = i.btree.Put(idBuf, itemBuf)
 	if err != nil {
-		return fmt.Errorf("index.Add: %w", err)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
 	}
 	return nil
 }

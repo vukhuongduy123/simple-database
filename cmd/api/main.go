@@ -19,11 +19,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := column.NewColumn("id", datatype.TypeInt64, true, column.Nullable|column.UsingIndex)
+	id, err := column.NewColumn("id", datatype.TypeInt64, column.PrimaryKey)
 	if err != nil {
 		log.Fatal(err)
 	}
-	username, err := column.NewColumn("username", datatype.TypeString, false, column.Nullable|column.UsingIndex)
+	username, err := column.NewColumn("username", datatype.TypeString, column.UsingIndex)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -44,13 +44,14 @@ func main() {
 	}
 
 	start := time.Now()
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 1000_000; i++ {
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
 				"username": "This is a user " + fmt.Sprint(i),
 			},
 		)
+		fmt.Printf("Inserting with index: %d\n", i)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -114,7 +115,7 @@ func main() {
 	{
 		start = time.Now()
 		newValueMap := map[string]any{}
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 1000_000; i++ {
 			whereClause = make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
@@ -127,6 +128,9 @@ func main() {
 					WhereClause: whereClause,
 					Limit:       1,
 				}, newValueMap)
+
+			fmt.Printf("Updated with index: %d\n", i)
+
 			if err != nil {
 				log.Fatal(err)
 			}

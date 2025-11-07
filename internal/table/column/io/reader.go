@@ -3,7 +3,6 @@ package io
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	stdio "io"
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
@@ -36,16 +35,16 @@ func (r *ColumnDefinitionReader) Read(b []byte) (int, error) {
 
 	length, err := r.reader.ReadUint32()
 	if err != nil {
-		return 0, fmt.Errorf("ColumnDefinitionReader.Read: len: %w", err)
+		return 0, err
 	}
 	if err = binary.Write(&buf, binary.LittleEndian, length); err != nil {
-		return 0, fmt.Errorf("ColumnDefinitionReader.Read: value: %w", err)
+		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 
 	col := make([]byte, length)
 	n, err := r.reader.Read(col)
 	if err != nil {
-		return n, fmt.Errorf("ColumnDefinitionReader.Read: reading file: %w", err)
+		return n, err
 	}
 	buf.Write(col)
 

@@ -58,7 +58,8 @@ type Comparator struct {
 
 type SelectCommand struct {
 	WhereClause map[string]Comparator
-	Limit       int
+	// TODO handle limit
+	Limit uint
 }
 
 func (c *SelectCommand) FilteredColumnNames() []string {
@@ -91,7 +92,7 @@ func newSelectResult() *SelectResult {
 	}
 }
 
-func (t *Table) WriteColumnDefinitions() error {
+func (t *Table) writeColumnDefinitions() error {
 	for _, c := range t.ColumnNames {
 		b, err := t.columns[c].MarshalBinary()
 		if err != nil {
@@ -144,7 +145,7 @@ func (t *Table) initIndexes() {
 	for _, col := range t.columns {
 		if col.Is(column.UsingIndex) {
 			idxName := dbPath + "_" + tableName + "_" + helper.ToString(col.Name[:]) + "_idx.bin"
-			idx := index.NewIndex(idxName, col.IsPrimaryKey || col.Is(column.UsingUniqueIndex))
+			idx := index.NewIndex(idxName, col.Is(column.UsingUniqueIndex))
 			indexes[helper.ToString(col.Name[:])] = idx
 		}
 	}
@@ -184,6 +185,10 @@ func NewTableWithColumns(file *os.File, columns Columns) (*Table, error) {
 	table.columns = columns
 
 	table.initIndexes()
+	err = table.writeColumnDefinitions()
+	if err != nil {
+		return nil, err
+	}
 
 	return table, nil
 }
@@ -220,6 +225,26 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 
 	if err := t.validateColumns(record); err != nil {
 		return 0, err
+	}
+
+	uniqueColumns := t.getUniqueColumns()
+	if len(uniqueColumns) != 0 {
+		for key, val := range record {
+			_, ok := uniqueColumns[key]
+			if !ok {
+				continue
+			}
+
+			page, err := t.indexes[key].Get(val)
+			if err != nil {
+				return 0, err
+			}
+
+			if page != index.EmptyItem {
+				return 0, platformerror.NewStackTraceError(fmt.Sprintf("Value %v already exist for unique index on column %v", val, key),
+					platformerror.UniqueIndexViolationErrorCode)
+			}
+		}
 	}
 
 	var sizeOfRecord uint32 = 0
@@ -272,9 +297,10 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		return 0, err
 	}
 
-	primaryKeyColumnName := t.getPrimaryKeyColumnName()
-	if err = t.indexes[primaryKeyColumnName].Add(record[primaryKeyColumnName], page.StartPos); err != nil {
-		return 0, err
+	for k, v := range t.indexes {
+		if err = v.Add(record[k], page.StartPos); err != nil {
+			return 0, err
+		}
 	}
 
 	t.invalidateCache(page)
@@ -294,10 +320,6 @@ func (t *Table) validateColumns(record tableparser.RecordValue) error {
 				platformerror.ColumnViolationErrorCode)
 		}
 
-		if !t.columns[col].Is(column.Nullable) && val == nil {
-			return platformerror.NewStackTraceError(fmt.Sprintf("Column %s not nullable", col), platformerror.ColumnViolationErrorCode)
-		}
-
 		if !datatype.IsScalar(val) {
 			return platformerror.NewStackTraceError(fmt.Sprintf("Column %s type %v not valid", col, val),
 				platformerror.ColumnViolationErrorCode)
@@ -306,15 +328,36 @@ func (t *Table) validateColumns(record tableparser.RecordValue) error {
 	return nil
 }
 
+func (t *Table) getUniqueColumns() Columns {
+	uniqueColumns := make(Columns)
+	for _, col := range t.columns {
+		if col.Is(column.UsingUniqueIndex) {
+			uniqueColumns[helper.ToString(col.Name[:])] = col
+		}
+	}
+	return uniqueColumns
+}
+
 func (t *Table) getPrimaryKeyColumnName() string {
 	var primaryKeyColumnName string
 	for _, col := range t.columns {
-		if col.IsPrimaryKey {
+		if col.Is(column.PrimaryKey) {
 			return helper.ToString(col.Name[:])
 		}
 	}
 
 	return primaryKeyColumnName
+}
+
+func (t *Table) getUsingIndexColumn(filteredColumnNames []string) (string, bool) {
+	for _, v := range filteredColumnNames {
+		_, ok := t.indexes[v]
+		if ok {
+			return v, true
+		}
+	}
+
+	return "", false
 }
 
 func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
@@ -330,13 +373,14 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	selectResult := newSelectResult()
 
 	singleResult := false
-	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 
-	if slices.Contains(filteredColumnNames, primaryKeyColumnName) {
-		id := command.WhereClause[primaryKeyColumnName].Value
-		op := command.WhereClause[primaryKeyColumnName].Operator
+	usingIndexColumnName, ok := t.getUsingIndexColumn(filteredColumnNames)
 
-		item, err := t.indexes[primaryKeyColumnName].Compare(id, op)
+	if ok {
+		colVal := command.WhereClause[usingIndexColumnName].Value
+		op := command.WhereClause[usingIndexColumnName].Operator
+
+		item, err := t.indexes[usingIndexColumnName].Compare(colVal, op)
 		if err != nil {
 			return nil, err
 		}
@@ -368,8 +412,8 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 			selectResult.Extra = "Using page cache"
 			t.recordParser = tableparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
 		}
-
 	}
+
 	defer func() {
 		t.recordParser = tableparser.NewRecordParser(t.file, t.ColumnNames)
 	}()
@@ -595,6 +639,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		if err := t.ensureColumnLength(rawRecord.Record); err != nil {
 			return nil, err
 		}
+
 		if !t.evaluateWhereClause(command, rawRecord.Record) {
 			continue
 		}
@@ -621,8 +666,10 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		ids = append(ids, v.id)
 	}
 
-	if err := t.indexes[primaryKeyColumnName].RemoveAll(ids); err != nil {
-		return nil, err
+	for _, v := range t.indexes {
+		if err := v.RemoveAll(ids); err != nil {
+			return nil, err
+		}
 	}
 
 	return deleteResult, nil
@@ -945,11 +992,11 @@ func (t *Table) removeEmptyPage(page int64) (e error) {
 // Close closes the table and the primaryKeyIndex files
 func (t *Table) Close() error {
 	if err := t.file.Close(); err != nil {
-		return fmt.Errorf("Table.Close: %w", err)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.CloseErrorCode)
 	}
 	for _, idx := range t.indexes {
 		if err := idx.Close(); err != nil {
-			return err
+			return platformerror.NewStackTraceError(err.Error(), platformerror.CloseErrorCode)
 		}
 	}
 	return nil

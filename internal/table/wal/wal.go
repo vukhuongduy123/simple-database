@@ -230,7 +230,8 @@ func (w *WAL) getRestorableData(commitID string) ([]byte, error) {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
 		}
 		if t != datatype.TypeWALEntry {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.InvalidDataTypeErrorCode)
+			return nil, platformerror.NewStackTraceError(fmt.Sprintf("Expected %v, got %v", datatype.TypeWALEntry, t),
+				platformerror.InvalidDataTypeErrorCode)
 		}
 
 		length, err := r.ReadUint32()
