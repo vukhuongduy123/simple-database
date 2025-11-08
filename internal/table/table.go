@@ -236,12 +236,12 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 				continue
 			}
 
-			page, err := t.indexes[key].Get(val)
+			pages, err := t.indexes[key].Get(val, datatype.OperatorEqual)
 			if err != nil {
 				return 0, err
 			}
 
-			if page != index.EmptyItem {
+			if pages != nil {
 				return 0, platformerror.NewStackTraceError(fmt.Sprintf("Value %v already exist for unique index on column %v", val, key),
 					platformerror.UniqueIndexViolationErrorCode)
 			}
@@ -373,76 +373,114 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 
 	selectResult := newSelectResult()
 
-	singleResult := false
-
 	usingIndexColumnName, ok := t.getUsingIndexColumn(filteredColumnNames)
+	var indexKeys []index.Item
 
 	if ok {
+		selectResult.AccessType = AccessTypeIndex
+
 		colVal := command.WhereClause[usingIndexColumnName].Value
 		op := command.WhereClause[usingIndexColumnName].Operator
 
-		item, err := t.indexes[usingIndexColumnName].Compare(colVal, op)
+		keys, err := t.indexes[usingIndexColumnName].Get(colVal, op)
 		if err != nil {
 			return nil, err
 		}
 
-		singleResult = true
-		selectResult.AccessType = AccessTypeIndex
-		if _, err = t.file.Seek(item.PagePos, stdio.SeekStart); err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
-		}
-
-		key := t.pageKey(item.PagePos)
-
-		if !t.lru.Contains(key) {
-			selectResult.Extra = "Not using page cache"
-			pr := indexparser.NewPageReader(t.reader)
-			pageContent := make([]byte, PageSize+datatype.LenMeta)
-			n, err := pr.Read(pageContent)
-			if err != nil {
-				return nil, err
-			}
-			pageContent = pageContent[:n]
-			reader := bytes.NewReader(pageContent)
-			t.recordParser = tableparser.NewRecordParser(reader, t.ColumnNames)
-			if err = t.lru.Put(key, *index.NewPageWithContent(item.PagePos, pageContent)); err != nil {
-				return nil, err
-			}
-		} else {
-			page := t.lru.Get(key)
-			selectResult.Extra = "Using page cache"
-			t.recordParser = tableparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
-		}
+		indexKeys = keys
 	}
 
 	defer func() {
 		t.recordParser = tableparser.NewRecordParser(t.file, t.ColumnNames)
 	}()
 
-	for {
-		err := t.recordParser.Parse()
-		if err == stdio.EOF {
-			return selectResult, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		rawRecord := t.recordParser.Value
-		selectResult.RowsInspected++
+	if selectResult.AccessType == AccessTypeIndex {
+		for _, key := range indexKeys {
+			pageEndPos := key.PagePos + PageSize
+			pageKey := t.pageKey(key.PagePos)
 
-		if err = t.ensureColumnLength(rawRecord.Record); err != nil {
-			return nil, err
-		}
-		if !t.evaluateWhereClause(command, rawRecord.Record) {
-			continue
-		}
+			_, err := t.file.Seek(key.PagePos, stdio.SeekStart)
+			if err != nil {
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			}
 
-		selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
+			if !t.lru.Contains(pageKey) {
+				selectResult.Extra = "Not using page cache"
+				pr := indexparser.NewPageReader(t.reader)
+				pageContent := make([]byte, PageSize+datatype.LenMeta)
+				n, err := pr.Read(pageContent)
+				if err != nil {
+					return nil, err
+				}
+				pageContent = pageContent[:n]
+				reader := bytes.NewReader(pageContent)
+				t.recordParser = tableparser.NewRecordParser(reader, t.ColumnNames)
+				if err = t.lru.Put(pageKey, *index.NewPageWithContent(key.PagePos, pageContent)); err != nil {
+					return nil, err
+				}
+			} else {
+				page := t.lru.Get(pageKey)
+				selectResult.Extra = "Using page cache"
+				t.recordParser = tableparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
+			}
 
-		if singleResult {
-			return selectResult, nil
+			for {
+				err := t.recordParser.Parse()
+				if err != nil {
+					if err == stdio.EOF {
+						return selectResult, nil
+					}
+					return nil, err
+				}
+
+				curPos, err := t.file.Seek(0, stdio.SeekCurrent)
+				if err != nil {
+					return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				}
+				if curPos >= pageEndPos {
+					continue
+				}
+
+				rawRecord := t.recordParser.Value
+				selectResult.RowsInspected++
+
+				if err = t.ensureColumnLength(rawRecord.Record); err != nil {
+					return nil, err
+				}
+
+				if !t.evaluateWhereClause(command, rawRecord.Record) {
+					continue
+				}
+
+				selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
+			}
+		}
+	} else {
+		for {
+			err := t.recordParser.Parse()
+			if err != nil {
+				if err == stdio.EOF {
+					return selectResult, nil
+				}
+				return nil, err
+			}
+
+			rawRecord := t.recordParser.Value
+			selectResult.RowsInspected++
+
+			if err = t.ensureColumnLength(rawRecord.Record); err != nil {
+				return nil, err
+			}
+
+			if !t.evaluateWhereClause(command, rawRecord.Record) {
+				continue
+			}
+
+			selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
 		}
 	}
+
+	return selectResult, nil
 }
 
 func (t *Table) moveToPageRegion() error {
@@ -579,16 +617,6 @@ func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int
 		if err != nil {
 			return 0, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 		}
-
-		length, err := t.reader.ReadUint32()
-		if err != nil {
-			return 0, err
-		}
-
-		zeroBytes := make([]byte, length)
-		if err = binary.Write(t.file, binary.LittleEndian, zeroBytes); err != nil {
-			return 0, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
-		}
 	}
 	return len(deletableRecords), nil
 }
@@ -625,42 +653,44 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	for _, row := range selectResult.Rows {
 		id, _ := row[primaryKeyColumnName]
 
-		page, err := t.indexes[primaryKeyColumnName].Get(id)
+		keys, err := t.indexes[primaryKeyColumnName].Get(id, datatype.OperatorEqual)
 		if err != nil {
 			return nil, err
 		}
 
-		if _, err = t.file.Seek(page.PagePos, stdio.SeekStart); err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-		}
-
-		if err := t.recordParser.Parse(); err != nil {
-			if err == stdio.EOF {
-				break
+		for _, key := range keys {
+			if _, err = t.file.Seek(key.PagePos, stdio.SeekStart); err != nil {
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
 			}
-			return nil, err
+
+			if err := t.recordParser.Parse(); err != nil {
+				if err == stdio.EOF {
+					break
+				}
+				return nil, err
+			}
+
+			rawRecord := t.recordParser.Value
+			if err := t.ensureColumnLength(rawRecord.Record); err != nil {
+				return nil, err
+			}
+
+			if !t.evaluateWhereClause(command, rawRecord.Record) {
+				continue
+			}
+
+			pos, err := t.file.Seek(0, stdio.SeekCurrent)
+			if err != nil {
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			}
+
+			deletableRecord := newDeletableRecord(id, pos-int64(rawRecord.FullSize), rawRecord.FullSize)
+			deletableRecords = append(deletableRecords, deletableRecord)
+
+			deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, rawRecord)
+
+			deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(key.PagePos))
 		}
-
-		rawRecord := t.recordParser.Value
-		if err := t.ensureColumnLength(rawRecord.Record); err != nil {
-			return nil, err
-		}
-
-		if !t.evaluateWhereClause(command, rawRecord.Record) {
-			continue
-		}
-
-		pos, err := t.file.Seek(0, stdio.SeekCurrent)
-		if err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-		}
-
-		deletableRecord := newDeletableRecord(id, pos-int64(rawRecord.FullSize), rawRecord.FullSize)
-		deletableRecords = append(deletableRecords, deletableRecord)
-
-		deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, rawRecord)
-
-		deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(page.PagePos))
 	}
 
 	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
@@ -670,6 +700,10 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	ids := make([]any, 0)
 	for _, v := range deletableRecords {
 		ids = append(ids, v.id)
+	}
+
+	for _, p := range deleteResult.AffectedPages {
+		t.invalidateCache(p)
 	}
 
 	for _, v := range t.indexes {
@@ -760,57 +794,62 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
 	}
 
-	for {
-		if lastPagePos == -1 {
-			err = t.seekUntil(datatype.TypePage)
-			if err != nil {
-				if err == stdio.EOF {
-					page, err := t.insertEmptyPage()
-					lastPagePos = page.StartPos
-					return page, err
+	if lastPagePos == -1 {
+		err = t.seekUntil(datatype.TypePage)
+		if err != nil {
+			if err == stdio.EOF {
+				page, err := t.insertEmptyPage()
+				if err != nil {
+					return nil, err
 				}
-
-				return nil, err
-			} else {
-				lastPagePos, err = t.file.Seek(0, stdio.SeekCurrent)
+				lastPagePos = page.StartPos
+				return page, nil
 			}
+
+			return nil, err
 		} else {
-			_, err = t.file.Seek(lastPagePos, stdio.SeekStart)
-			if err != nil {
-				return nil, err
-			}
+			lastPagePos, err = t.file.Seek(0, stdio.SeekCurrent)
 		}
-
-		// Skipping the type definition byte
-		if _, err = t.reader.ReadByte(); err != nil {
+	} else {
+		_, err = t.file.Seek(lastPagePos, stdio.SeekStart)
+		if err != nil {
 			return nil, err
 		}
+	}
 
-		currPageLen, err := t.reader.ReadUint32()
+	// Skipping the type definition byte
+	if _, err = t.reader.ReadByte(); err != nil {
+		return nil, err
+	}
+
+	currPageLen, err := t.reader.ReadUint32()
+	if err != nil {
+		return nil, err
+	}
+
+	if currPageLen+lenToFit <= PageSize {
+		pagePos, err := t.file.Seek(-1*datatype.LenMeta, stdio.SeekCurrent)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		}
+
+		_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
+		lastPagePos = pagePos
+		return index.NewPage(pagePos), err
+	} else {
+		_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		}
+		page, err := t.insertEmptyPage()
 		if err != nil {
 			return nil, err
 		}
 
-		if currPageLen+lenToFit <= PageSize {
-			pagePos, err := t.file.Seek(-1*datatype.LenMeta, stdio.SeekCurrent)
-			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-			}
+		fmt.Printf("Page full, inserting new one at offset %d\n", page.StartPos)
 
-			_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
-			lastPagePos = pagePos
-			return index.NewPage(pagePos), err
-		} else {
-			_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
-			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-			}
-			page, err := t.insertEmptyPage()
-			if err != nil {
-				return nil, err
-			}
-			lastPagePos = page.StartPos
-		}
+		lastPagePos = page.StartPos
+		return page, err
 	}
 
 }

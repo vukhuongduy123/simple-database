@@ -43,110 +43,58 @@ func main() {
 		log.Fatal(err)
 	}
 
-	start := time.Now()
-	for i := 0; i < 1000_000; i++ {
+	for i := 0; i < 10000; i++ {
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
 				"username": "This is a user " + fmt.Sprint(i),
 			},
 		)
-		fmt.Printf("Inserting with index: %d\n", i)
+		// fmt.Printf("Inserting with index: %d\n", i)
 		if err != nil {
 			fmt.Println(err)
 		}
 	}
-	elapsed := time.Since(start)
-	fmt.Printf("Time elapsed running 10M insert: %s\n", elapsed)
-
-	start = time.Now()
-	whereClause := make(map[string]table.Comparator)
-	whereClause["id"] = table.Comparator{
-		Operator: datatype.OperatorEqual,
-		Value:    int64(500),
-	}
-
-	resultSet, err := db.Tables["users"].Select(table.SelectCommand{
-		WhereClause: whereClause,
-		Limit:       10,
-	})
-	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed selecting with index: %s\n", elapsed)
-	fmt.Println(resultSet)
-
-	start = time.Now()
-	whereClause = make(map[string]table.Comparator)
-	whereClause["id"] = table.Comparator{
-		Operator: datatype.OperatorEqual,
-		Value:    int64(501),
-	}
-	resultSet, err = db.Tables["users"].Select(table.SelectCommand{
-		WhereClause: whereClause,
-		Limit:       10,
-	})
-	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed selecting with cache: %s\n", elapsed)
-	fmt.Println(resultSet)
-
-	whereClause = make(map[string]table.Comparator)
-	whereClause["username"] = table.Comparator{
-		Operator: datatype.OperatorEqual,
-		Value:    "This is a user 500",
-	}
-	resultSet, err = db.Tables["users"].Select(table.SelectCommand{
-		WhereClause: whereClause,
-		Limit:       10,
-	})
-	elapsed = time.Since(start)
-	fmt.Printf("Time elapsed selecting no index: %s\n", elapsed)
-	fmt.Println(resultSet)
 
 	{
-		start = time.Now()
-		resultSet, err = db.Tables["users"].Select(table.SelectCommand{})
-		elapsed = time.Since(start)
-		fmt.Printf("Time elapsed selecting all: %s\n", elapsed)
-		results := resultSet.Rows
-		for idx, result := range results {
-			fmt.Printf("%d: %v\n", idx, result)
-		}
-	}
-
-	{
-		start = time.Now()
+		start := time.Now()
 		newValueMap := map[string]any{}
-		for i := 0; i < 1000_000; i++ {
-			whereClause = make(map[string]table.Comparator)
+		for i := 0; i < 10000; i++ {
+			start := time.Now()
+			whereClause := make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
 				Value:    int64(i),
 			}
 
 			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
+			if i == 102 {
+				fmt.Println("here")
+			}
 			_, err = db.Tables["users"].Update(
 				table.SelectCommand{
 					WhereClause: whereClause,
 					Limit:       1,
 				}, newValueMap)
 
-			fmt.Printf("Updated with index: %d\n", i)
+			elapsed := time.Since(start)
+			fmt.Printf("Updated with index: %d %s\n", i, elapsed)
 
 			if err != nil {
 				log.Fatal(err)
 			}
 		}
 
-		elapsed = time.Since(start)
+		elapsed := time.Since(start)
 		fmt.Printf("Time elapsed update: %s\n", elapsed)
 	}
 
 	{
-		start = time.Now()
-		resultSet, err = db.Tables["users"].Select(table.SelectCommand{})
-		elapsed = time.Since(start)
+		start := time.Now()
+		resultSet, _ := db.Tables["users"].Select(table.SelectCommand{})
+		elapsed := time.Since(start)
 		fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
-		results := resultSet.Rows
-		for idx, result := range results {
+		for idx, result := range resultSet.Rows {
 			fmt.Printf("%d: %v\n", idx, result)
 		}
 	}

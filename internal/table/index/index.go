@@ -35,10 +35,6 @@ func NewIndex(f string, unique bool) *Index {
 	return &Index{btree: bt, unique: unique}
 }
 
-var EmptyItem = Item{val: -1, PagePos: -1}
-
-var ErrorItem = Item{val: -2, PagePos: -2}
-
 func (i *Item) MarshalBinary() ([]byte, error) {
 	buf := bytes.Buffer{}
 	// type
@@ -115,13 +111,12 @@ func (i *Index) Add(val any, pagePos int64) error {
 	}
 
 	if i.unique {
-		item, err := i.Get(val)
-
+		items, err := i.Get(val, datatype.OperatorEqual)
 		if err != nil {
 			return err
 		}
 
-		if item != EmptyItem {
+		if items != nil {
 			return platformerror.NewStackTraceError(fmt.Sprintf("Unique key validate with value: %v", val), platformerror.UniqueKeyViolationErrorCode)
 		}
 	}
@@ -131,30 +126,6 @@ func (i *Index) Add(val any, pagePos int64) error {
 		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
 	}
 	return nil
-}
-
-func (i *Index) Get(val any) (Item, error) {
-	marshaler := platformparser.NewValueMarshaler[any](val)
-	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
-	if err != nil {
-		return Item{}, err
-	}
-
-	key, err := i.btree.Get(valBuf)
-	if err != nil {
-		return ErrorItem, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
-	}
-	if key == nil {
-		return EmptyItem, nil
-	}
-	item := Item{}
-	// for now only support return one item
-	err = item.UnmarshalBinary(key.V[0])
-	if err != nil {
-		return ErrorItem, err
-	}
-
-	return item, nil
 }
 
 func (i *Index) Close() error {
@@ -184,21 +155,23 @@ func (i *Index) RemoveAll(ids []any) error {
 	return nil
 }
 
-// Compare TODO: for now only support first equal item
-func (i *Index) Compare(val any, op string) (Item, error) {
+func (i *Index) Get(val any, op string) ([]Item, error) {
 	marshaler := platformparser.NewValueMarshaler[any](val)
 	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
-		return ErrorItem, err
+		return nil, err
 	}
-
-	item := Item{}
 
 	var keys []*btree.Key
 
 	switch op {
 	case datatype.OperatorEqual:
-		return i.Get(val)
+		key, e := i.btree.Get(valBuf)
+		if key == nil {
+			return nil, nil
+		}
+		err = e
+		keys = append(keys, key)
 	case datatype.OperatorGreater:
 		keys, err = i.btree.GreaterThan(valBuf)
 	case datatype.OperatorLess:
@@ -210,20 +183,30 @@ func (i *Index) Compare(val any, op string) (Item, error) {
 	case datatype.OperatorNotEqual:
 		keys, err = i.btree.NGet(valBuf)
 	default:
-		return ErrorItem, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
 	}
 
 	if err != nil {
-		return ErrorItem, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeErrorCode)
 	}
+
+	items := make([]Item, 0)
 
 	if keys == nil {
-		return EmptyItem, nil
+		return nil, nil
 	}
 
-	err = item.UnmarshalBinary(keys[0].V[0])
-	if err != nil {
-		return ErrorItem, err
+	for _, key := range keys {
+		for _, v := range key.V {
+			item := Item{}
+			err = item.UnmarshalBinary(v)
+			if err != nil {
+				return nil, err
+			}
+
+			items = append(items, item)
+		}
 	}
-	return item, nil
+
+	return items, nil
 }

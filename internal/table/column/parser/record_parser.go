@@ -71,9 +71,7 @@ func (r *RecordParser) skipDeletedRecords() error {
 
 func (r *RecordParser) Parse() error {
 	read := io.NewReader(r.file)
-	if r.reader == nil {
-		r.reader = read
-	}
+	r.reader = read
 
 	t, err := read.ReadByte()
 	if err != nil {
