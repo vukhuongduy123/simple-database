@@ -10,8 +10,5 @@ func NewPage(startPos int64) *Page {
 }
 
 func NewPageWithContent(startPos int64, content []byte) *Page {
-	return &Page{
-		StartPos: startPos,
-		Content:  content,
-	}
+	return &Page{StartPos: startPos, Content: content}
 }

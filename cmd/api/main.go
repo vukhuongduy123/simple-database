@@ -6,6 +6,7 @@ import (
 	"os"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
+	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
 	"simple-database/internal/table/column"
 	"time"
@@ -43,14 +44,14 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < 2000_000; i++ {
+		helper.Log.Debugf("Inserting user %d", i)
 		_, err = db.Tables["users"].Insert(
 			map[string]interface{}{
 				"id":       int64(i),
 				"username": "This is a user " + fmt.Sprint(i),
 			},
 		)
-		// fmt.Printf("Inserting with index: %d\n", i)
 		if err != nil {
 			fmt.Println(err)
 		}
@@ -59,8 +60,8 @@ func main() {
 	{
 		start := time.Now()
 		newValueMap := map[string]any{}
-		for i := 0; i < 10000; i++ {
-			start := time.Now()
+		for i := 0; i < 2000_000; i++ {
+			helper.Log.Debugf("Updating user %d", i)
 			whereClause := make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
@@ -68,18 +69,11 @@ func main() {
 			}
 
 			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
-			if i == 102 {
-				fmt.Println("here")
-			}
 			_, err = db.Tables["users"].Update(
 				table.SelectCommand{
 					WhereClause: whereClause,
 					Limit:       1,
 				}, newValueMap)
-
-			elapsed := time.Since(start)
-			fmt.Printf("Updated with index: %d %s\n", i, elapsed)
-
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -91,7 +85,19 @@ func main() {
 
 	{
 		start := time.Now()
-		resultSet, _ := db.Tables["users"].Select(table.SelectCommand{})
+		resultSet, e := db.Tables["users"].Select(table.SelectCommand{
+			Limit: 1000000,
+			WhereClause: map[string]table.Comparator{
+				"username": {
+					Operator: datatype.OperatorEqual,
+					Value:    "This is a user -159",
+				},
+			},
+		})
+		if e != nil {
+			log.Fatal(e)
+		}
+
 		elapsed := time.Since(start)
 		fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
 		for idx, result := range resultSet.Rows {

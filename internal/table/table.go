@@ -90,6 +90,7 @@ func newSelectResult() *SelectResult {
 	return &SelectResult{
 		AccessType: AccessTypeAll,
 		Extra:      "Not using page cache",
+		Rows:       make([]tableparser.RecordValue, 0),
 	}
 }
 
@@ -298,8 +299,9 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		return 0, err
 	}
 
+	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 	for k, v := range t.indexes {
-		if err = v.Add(record[k], page.StartPos); err != nil {
+		if err = v.Add(record[k], record[primaryKeyColumnName], page.StartPos); err != nil {
 			return 0, err
 		}
 	}
@@ -385,6 +387,9 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 		keys, err := t.indexes[usingIndexColumnName].Get(colVal, op)
 		if err != nil {
 			return nil, err
+		}
+		if keys == nil {
+			return selectResult, nil
 		}
 
 		indexKeys = keys
@@ -697,19 +702,21 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		return nil, err
 	}
 
-	ids := make([]any, 0)
-	for _, v := range deletableRecords {
-		ids = append(ids, v.id)
+	for _, rec := range deleteResult.DeletedRecords {
+		for k, v := range rec.Record {
+			idx, ok := t.indexes[k]
+			if !ok {
+				continue
+			}
+
+			if err := idx.Remove(v, rec.Record[primaryKeyColumnName]); err != nil {
+				return nil, err
+			}
+		}
 	}
 
 	for _, p := range deleteResult.AffectedPages {
 		t.invalidateCache(p)
-	}
-
-	for _, v := range t.indexes {
-		if err := v.RemoveAll(ids); err != nil {
-			return nil, err
-		}
 	}
 
 	return deleteResult, nil
@@ -771,7 +778,7 @@ func (t *Table) RestoreWAL() error {
 	}
 	// Nothing to restore
 	if restorableData == nil {
-		fmt.Println("RestoreWAL skipped")
+		helper.Log.Debug("RestoreWAL skipped")
 		return nil
 	}
 	n, err := t.file.Write(restorableData.Data)
@@ -846,7 +853,7 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 			return nil, err
 		}
 
-		fmt.Printf("Page full, inserting new one at offset %d\n", page.StartPos)
+		helper.Log.Debugf("Page full, inserting new one at offset %d", page.StartPos)
 
 		lastPagePos = page.StartPos
 		return page, err

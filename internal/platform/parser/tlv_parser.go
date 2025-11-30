@@ -8,7 +8,8 @@ import (
 )
 
 type TLVParser struct {
-	reader *io.Reader
+	reader    *io.Reader
+	bytesRead uint32
 }
 
 func NewTLVParser(reader *io.Reader) *TLVParser {
@@ -25,23 +26,37 @@ func (p *TLVParser) Parse() (interface{}, error) {
 
 	switch data[0] {
 	case datatype.TypeInt64:
-		return unmarshalValue[int64](data)
+		dataRead, bytesRead, e := unmarshalValue[int64](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	case datatype.TypeInt32:
-		return unmarshalValue[int32](data)
+		dataRead, bytesRead, e := unmarshalValue[int32](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	case datatype.TypeByte:
-		return unmarshalValue[byte](data)
+		dataRead, bytesRead, e := unmarshalValue[byte](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	case datatype.TypeBool:
-		return unmarshalValue[bool](data)
+		dataRead, bytesRead, e := unmarshalValue[bool](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	case datatype.TypeString:
-		return unmarshalValue[string](data)
+		dataRead, bytesRead, e := unmarshalValue[string](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	}
 	return nil, platformerror.NewStackTraceError(fmt.Sprintf("TLVParser.Parse: unknown type: %d", data[0]), platformerror.UnknownDatatypeErrorCode)
 }
 
-func unmarshalValue[T any](data []byte) (interface{}, error) {
+func (p *TLVParser) BytesRead() uint32 {
+	return p.bytesRead
+}
+
+func unmarshalValue[T any](data []byte) (interface{}, uint32, error) {
 	tlvUnmarshaler := NewTLVUnmarshaler(NewValueUnmarshaler[T]())
 	if err := tlvUnmarshaler.UnmarshalBinary(data); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return tlvUnmarshaler.Value, nil
+	return tlvUnmarshaler.Value, tlvUnmarshaler.BytesRead, nil
 }

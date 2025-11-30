@@ -83,13 +83,11 @@ func (c *ColumnDefinitionMarshaler) UnmarshalBinary(data []byte) error {
 		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %v, got %v", datatype.TypeColumnDefinition, typeFlag),
 			platformerror.InvalidDataTypeErrorCode)
 	}
-
 	readBytes += datatype.LenByte
 
 	if err := uint32UnmarshalBinary.UnmarshalBinary(data[readBytes : readBytes+datatype.LenInt32]); err != nil {
 		return err
 	}
-
 	readBytes += datatype.LenInt32
 
 	nameUnmarshaler := parser.NewTLVUnmarshaler[string](parser.NewValueUnmarshaler[string]())

@@ -33,6 +33,7 @@ const (
 	CloseErrorCode
 	InvalidNumberOfPrimaryKeysErrorCode
 	UniqueIndexViolationErrorCode
+	IndexLengthViolationErrorCode
 )
 
 // StackTraceError wraps any error and captures a stack trace
