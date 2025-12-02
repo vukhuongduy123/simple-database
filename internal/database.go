@@ -8,7 +8,6 @@ import (
 	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
 	"simple-database/internal/table/column"
-	"strings"
 )
 
 const (
@@ -49,11 +48,6 @@ func NewDatabase(name string) (*Database, error) {
 		return nil, err
 	}
 	db.Tables = tables
-	for _, t := range db.Tables {
-		if err := t.RestoreWAL(); err != nil {
-			return nil, err
-		}
-	}
 	return db, nil
 }
 
@@ -91,10 +85,6 @@ func (db *Database) readTables() (Tables, error) {
 	tables := make([]*table.Table, 0)
 
 	for _, v := range tablePaths {
-		if strings.Contains(v.Name(), "_wal") || strings.Contains(v.Name(), "_idx") {
-			continue
-		}
-
 		if _, err := v.Info(); err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 		}

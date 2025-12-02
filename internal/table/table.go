@@ -18,8 +18,6 @@ import (
 	tableparser "simple-database/internal/table/column/parser"
 	"simple-database/internal/table/index"
 	indexparser "simple-database/internal/table/index/parser"
-	"simple-database/internal/table/wal"
-	walparser "simple-database/internal/table/wal/parser"
 	"slices"
 	"strings"
 )
@@ -40,7 +38,6 @@ type Table struct {
 	reader          *platformio.Reader
 	columnDefReader *io.ColumnDefinitionReader
 	recordParser    *tableparser.RecordParser
-	wal             *wal.WAL
 	indexes         map[string]*index.Index
 	lru             *platform.LRU[string, index.Page]
 }
@@ -117,13 +114,6 @@ func newTable(f *os.File) (*Table, error) {
 		return nil, err
 	}
 
-	dbPath := GetPath(f)
-
-	walFile, err := wal.NewWal(dbPath, tableName)
-	if err != nil {
-		return nil, err
-	}
-
 	r := platformio.NewReader(f)
 	columnDefReader := io.NewColumnDefinitionReader(r)
 
@@ -133,7 +123,6 @@ func newTable(f *os.File) (*Table, error) {
 		columns:         make(Columns),
 		reader:          r,
 		columnDefReader: columnDefReader,
-		wal:             walFile,
 		lru:             platform.NewLRU[string, index.Page](10),
 	}, nil
 }
@@ -289,11 +278,6 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		buf.Write(b)
 	}
 
-	walEntry, err := t.wal.Append(walparser.OpInsert, t.Name, buf.Bytes())
-	if err != nil {
-		return 0, err
-	}
-
 	page, err := t.insertIntoPage(buf)
 	if err != nil {
 		return 0, err
@@ -307,11 +291,6 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 	}
 
 	t.invalidateCache(page)
-
-	err = t.wal.Commit(walEntry)
-	if err != nil {
-		return 0, err
-	}
 
 	return 1, nil
 }
@@ -765,34 +744,6 @@ func GetTableName(f *os.File) (string, error) {
 
 func GetPath(f *os.File) string {
 	return filepath.Dir(f.Name()) + string(filepath.Separator)
-}
-
-func (t *Table) RestoreWAL() error {
-	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-	}
-
-	restorableData, err := t.wal.GetRestorableData()
-	if err != nil {
-		return err
-	}
-	// Nothing to restore
-	if restorableData == nil {
-		helper.Log.Debug("RestoreWAL skipped")
-		return nil
-	}
-	n, err := t.file.Write(restorableData.Data)
-	if err != nil {
-		return err
-	}
-	if n != len(restorableData.Data) {
-		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, got %d", n, len(restorableData.Data)), platformerror.BinaryWriteErrorCode)
-	}
-
-	if err = t.wal.Commit(restorableData.LastEntry); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {

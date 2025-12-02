@@ -11,7 +11,6 @@ const (
 	IncompleteReadErrorCode Code = iota
 	IncompleteWriteErrorCode
 	UnknownDatatypeErrorCode
-	BTreeErrorCode
 	UnknownOperatorErrorCode
 	UniqueKeyViolationErrorCode
 	BinaryWriteErrorCode
@@ -19,7 +18,6 @@ const (
 	InvalidNameLengthErrorCode
 	OpenFileErrorCode
 	FileSeekErrorCodeCode
-	ReadWalErrorCode
 	InvalidDataTypeErrorCode
 	InvalidTableName
 	MissingColumnErrorCode
@@ -33,7 +31,6 @@ const (
 	CloseErrorCode
 	InvalidNumberOfPrimaryKeysErrorCode
 	UniqueIndexViolationErrorCode
-	IndexLengthViolationErrorCode
 )
 
 // StackTraceError wraps any error and captures a stack trace

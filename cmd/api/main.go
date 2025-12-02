@@ -44,17 +44,22 @@ func main() {
 		log.Fatal(err)
 	}
 
-	for i := 0; i < 2000_000; i++ {
-		helper.Log.Debugf("Inserting user %d", i)
-		_, err = db.Tables["users"].Insert(
-			map[string]interface{}{
-				"id":       int64(i),
-				"username": "This is a user " + fmt.Sprint(i),
-			},
-		)
-		if err != nil {
-			fmt.Println(err)
+	{
+		start := time.Now()
+		for i := 0; i < 2000_000; i++ {
+			helper.Log.Debugf("Inserting user %d", i)
+			_, err = db.Tables["users"].Insert(
+				map[string]interface{}{
+					"id":       int64(i),
+					"username": "This is a user " + fmt.Sprint(i),
+				},
+			)
+			if err != nil {
+				fmt.Println(err)
+			}
 		}
+		elapsed := time.Since(start)
+		fmt.Printf("Time elapsed insert: %s\n", elapsed)
 	}
 
 	{

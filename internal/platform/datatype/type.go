@@ -10,7 +10,6 @@ const (
 	TypeColumnDefinition byte = 99
 	TypeRecord           byte = 100
 	TypeDeletedRecord    byte = 101
-	TypeWALEntry         byte = 20
 	TypePage             byte = 255
 	TypeIndex            byte = 254
 	TypeIndexItem        byte = 253
