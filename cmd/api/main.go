@@ -59,7 +59,7 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start)
-		fmt.Printf("Time elapsed insert: %s\n", elapsed)
+		helper.Log.Debugf("Time elapsed insert: %s\n", elapsed)
 	}
 
 	{
@@ -85,7 +85,7 @@ func main() {
 		}
 
 		elapsed := time.Since(start)
-		fmt.Printf("Time elapsed update: %s\n", elapsed)
+		helper.Log.Debugf("Time elapsed update: %s\n", elapsed)
 	}
 
 	{

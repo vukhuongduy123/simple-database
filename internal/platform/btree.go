@@ -5,7 +5,7 @@ import (
 )
 
 const (
-	degree      = 5
+	degree      = 100
 	maxChildren = 2 * degree
 	maxItems    = maxChildren - 1
 	minItems    = degree - 1

@@ -25,7 +25,7 @@ import (
 type Columns map[string]*column.Column
 
 const FileExtension = ".bin"
-const PageSize = 4096
+const PageSize = 4096 * 4
 
 var lastPagePos int64 = -1
 var pageRegionPos int64 = -1
