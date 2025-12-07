@@ -43,10 +43,11 @@ type Table struct {
 }
 
 type SelectResult struct {
-	Rows          []tableparser.RecordValue
+	Rows          []tableparser.RawRecord
 	AccessType    string
 	RowsInspected int
 	Extra         string
+	pagePos       []int64
 }
 
 type Comparator struct {
@@ -77,7 +78,6 @@ type DeleteResult struct {
 type DeletableRecord struct {
 	id     any
 	offset int64
-	len    uint32
 }
 
 const AccessTypeAll = "All"
@@ -87,7 +87,7 @@ func newSelectResult() *SelectResult {
 	return &SelectResult{
 		AccessType: AccessTypeAll,
 		Extra:      "Not using page cache",
-		Rows:       make([]tableparser.RecordValue, 0),
+		Rows:       make([]tableparser.RawRecord, 0),
 	}
 }
 
@@ -331,7 +331,7 @@ func (t *Table) getPrimaryKeyColumnName() string {
 	return primaryKeyColumnName
 }
 
-func (t *Table) getUsingIndexColumn(filteredColumnNames []string) (string, bool) {
+func (t *Table) getColumnsUsingIndex(filteredColumnNames []string) (string, bool) {
 	for _, v := range filteredColumnNames {
 		_, ok := t.indexes[v]
 		if ok {
@@ -343,7 +343,7 @@ func (t *Table) getUsingIndexColumn(filteredColumnNames []string) (string, bool)
 }
 
 func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
-	if err := t.moveToPageRegion(); err != nil {
+	if err := t.moveToFirstPageRegion(); err != nil {
 		return nil, err
 	}
 
@@ -354,16 +354,16 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 
 	selectResult := newSelectResult()
 
-	usingIndexColumnName, ok := t.getUsingIndexColumn(filteredColumnNames)
+	columnsUsingIndex, ok := t.getColumnsUsingIndex(filteredColumnNames)
 	var indexKeys []index.Item
 
 	if ok {
 		selectResult.AccessType = AccessTypeIndex
 
-		colVal := command.WhereClause[usingIndexColumnName].Value
-		op := command.WhereClause[usingIndexColumnName].Operator
+		colVal := command.WhereClause[columnsUsingIndex].Value
+		op := command.WhereClause[columnsUsingIndex].Operator
 
-		keys, err := t.indexes[usingIndexColumnName].Get(colVal, op)
+		keys, err := t.indexes[columnsUsingIndex].Get(colVal, op)
 		if err != nil {
 			return nil, err
 		}
@@ -428,15 +428,11 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				rawRecord := t.recordParser.Value
 				selectResult.RowsInspected++
 
-				if err = t.ensureColumnLength(rawRecord.Record); err != nil {
-					return nil, err
-				}
-
 				if !t.evaluateWhereClause(command, rawRecord.Record) {
 					continue
 				}
 
-				selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
+				selectResult.Rows = append(selectResult.Rows, *rawRecord)
 			}
 		}
 	} else {
@@ -452,22 +448,18 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 			rawRecord := t.recordParser.Value
 			selectResult.RowsInspected++
 
-			if err = t.ensureColumnLength(rawRecord.Record); err != nil {
-				return nil, err
-			}
-
 			if !t.evaluateWhereClause(command, rawRecord.Record) {
 				continue
 			}
 
-			selectResult.Rows = append(selectResult.Rows, rawRecord.Record)
+			selectResult.Rows = append(selectResult.Rows, *rawRecord)
 		}
 	}
 
 	return selectResult, nil
 }
 
-func (t *Table) moveToPageRegion() error {
+func (t *Table) moveToFirstPageRegion() error {
 	if pageRegionPos == -1 {
 		if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
 			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
@@ -605,11 +597,10 @@ func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int
 	return len(deletableRecords), nil
 }
 
-func newDeletableRecord(id any, offset int64, len uint32) *DeletableRecord {
+func newDeletableRecord(id any, offset int64) *DeletableRecord {
 	return &DeletableRecord{
 		id:     id,
 		offset: offset,
-		len:    len,
 	}
 }
 
@@ -618,7 +609,7 @@ func newDeleteResult() *DeleteResult {
 }
 
 func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
-	if err := t.moveToPageRegion(); err != nil {
+	if err := t.moveToFirstPageRegion(); err != nil {
 		return nil, err
 	}
 	if err := t.validateColumnNames(command.FilteredColumnNames()); err != nil {
@@ -635,7 +626,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	}
 
 	for _, row := range selectResult.Rows {
-		id, _ := row[primaryKeyColumnName]
+		id, _ := row.Record[primaryKeyColumnName]
 
 		keys, err := t.indexes[primaryKeyColumnName].Get(id, datatype.OperatorEqual)
 		if err != nil {
@@ -643,35 +634,20 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		}
 
 		for _, key := range keys {
-			if _, err = t.file.Seek(key.PagePos, stdio.SeekStart); err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-			}
 
-			if err := t.recordParser.Parse(); err != nil {
-				if err == stdio.EOF {
-					break
-				}
-				return nil, err
-			}
-
-			rawRecord := t.recordParser.Value
-			if err := t.ensureColumnLength(rawRecord.Record); err != nil {
-				return nil, err
-			}
-
-			if !t.evaluateWhereClause(command, rawRecord.Record) {
+			if !t.evaluateWhereClause(command, row.Record) {
 				continue
 			}
 
-			pos, err := t.file.Seek(0, stdio.SeekCurrent)
+			pos, err := t.file.Seek(key.PagePos, stdio.SeekStart)
 			if err != nil {
 				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
 			}
 
-			deletableRecord := newDeletableRecord(id, pos-int64(rawRecord.FullSize), rawRecord.FullSize)
+			deletableRecord := newDeletableRecord(id, pos-int64(row.FullSize))
 			deletableRecords = append(deletableRecords, deletableRecord)
 
-			deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, rawRecord)
+			deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, &row)
 
 			deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(key.PagePos))
 		}
