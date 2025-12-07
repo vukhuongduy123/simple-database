@@ -124,7 +124,7 @@ func newTable(f *os.File) (*Table, error) {
 		columns:         make(Columns),
 		reader:          r,
 		columnDefReader: columnDefReader,
-		lru:             platform.NewLRU[string, index.Page](10),
+		lru:             platform.NewLRU[string, index.Page](100),
 	}, nil
 }
 
@@ -421,7 +421,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				}
 
 				selectResult.Rows = append(selectResult.Rows, *rawRecord)
-				if uint32(len(selectResult.Rows)) > command.Limit {
+				if uint32(len(selectResult.Rows)) >= command.Limit {
 					return selectResult, nil
 				}
 			}
@@ -448,7 +448,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 			}
 
 			selectResult.Rows = append(selectResult.Rows, *rawRecord)
-			if uint32(len(selectResult.Rows)) > command.Limit {
+			if uint32(len(selectResult.Rows)) >= command.Limit {
 				return selectResult, nil
 			}
 		}
@@ -620,6 +620,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 
 	command.Limit = UnlimitedSize
 	selectResult, err := t.Select(command)
+	helper.Log.Debugf("Select result: %+v", selectResult)
 	if err != nil {
 		return nil, err
 	}
