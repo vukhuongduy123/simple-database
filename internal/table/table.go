@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	stdio "io"
+	"math"
 	"os"
 	"path/filepath"
 	"simple-database/internal/platform"
@@ -26,6 +27,7 @@ type Columns map[string]*column.Column
 
 const FileExtension = ".bin"
 const PageSize = 4096 * 4
+const UnlimitedSize = math.MaxUint32
 
 var lastPagePos int64 = -1
 var pageRegionPos int64 = -1
@@ -47,7 +49,6 @@ type SelectResult struct {
 	AccessType    string
 	RowsInspected int
 	Extra         string
-	pagePos       []int64
 }
 
 type Comparator struct {
@@ -58,7 +59,7 @@ type Comparator struct {
 type SelectCommand struct {
 	WhereClause map[string]Comparator
 	// TODO handle limit
-	Limit uint
+	Limit uint32
 }
 
 func (c *SelectCommand) FilteredColumnNames() []string {
@@ -343,10 +344,6 @@ func (t *Table) getColumnsUsingIndex(filteredColumnNames []string) (string, bool
 }
 
 func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
-	if err := t.moveToFirstPageRegion(); err != nil {
-		return nil, err
-	}
-
 	filteredColumnNames := command.FilteredColumnNames()
 	if err := t.validateColumnNames(filteredColumnNames); err != nil {
 		return nil, err
@@ -380,7 +377,6 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 
 	if selectResult.AccessType == AccessTypeIndex {
 		for _, key := range indexKeys {
-			pageEndPos := key.PagePos + PageSize
 			pageKey := t.pageKey(key.PagePos)
 
 			_, err := t.file.Seek(key.PagePos, stdio.SeekStart)
@@ -412,17 +408,9 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				err := t.recordParser.Parse()
 				if err != nil {
 					if err == stdio.EOF {
-						return selectResult, nil
+						break
 					}
 					return nil, err
-				}
-
-				curPos, err := t.file.Seek(0, stdio.SeekCurrent)
-				if err != nil {
-					return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
-				}
-				if curPos >= pageEndPos {
-					continue
 				}
 
 				rawRecord := t.recordParser.Value
@@ -433,9 +421,16 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				}
 
 				selectResult.Rows = append(selectResult.Rows, *rawRecord)
+				if uint32(len(selectResult.Rows)) > command.Limit {
+					return selectResult, nil
+				}
 			}
 		}
 	} else {
+		if err := t.moveToFirstPageRegion(); err != nil {
+			return nil, err
+		}
+
 		for {
 			err := t.recordParser.Parse()
 			if err != nil {
@@ -453,6 +448,9 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 			}
 
 			selectResult.Rows = append(selectResult.Rows, *rawRecord)
+			if uint32(len(selectResult.Rows)) > command.Limit {
+				return selectResult, nil
+			}
 		}
 	}
 
@@ -620,6 +618,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 
 	deleteResult := newDeleteResult()
 
+	command.Limit = UnlimitedSize
 	selectResult, err := t.Select(command)
 	if err != nil {
 		return nil, err

@@ -45,30 +45,6 @@ func NewRawRecord(size uint32, record map[string]interface{}) *RawRecord {
 	}
 }
 
-func (r *RecordParser) skipDeletedRecords() error {
-	for {
-		t, err := r.reader.ReadByte()
-		if err != nil {
-			if err == stdio.EOF {
-				return err
-			}
-			return err
-		}
-		if t == datatype.TypeDeletedRecord {
-			l, err := r.reader.ReadUint32()
-			if err != nil {
-				return err
-			}
-			if _, err = r.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
-				return err
-			}
-		}
-		if t == datatype.TypeRecord {
-			return nil
-		}
-	}
-}
-
 func (r *RecordParser) Parse() error {
 	read := io.NewReader(r.file)
 	r.reader = read
@@ -93,15 +69,20 @@ func (r *RecordParser) Parse() error {
 			t), platformerror.InvalidDataTypeErrorCode)
 	}
 
-	if t == datatype.TypeDeletedRecord {
-		if _, err := r.file.Seek(-1*datatype.LenByte, stdio.SeekCurrent); err != nil {
-			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+	// loop until we find a record
+	for {
+		if t == datatype.TypeRecord {
+			break
 		}
-		err = r.skipDeletedRecords()
+		l, err := r.reader.ReadUint32()
 		if err != nil {
-			if err == stdio.EOF {
-				return err
-			}
+			return err
+		}
+		if _, err = r.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
+			return err
+		}
+		t, err = read.ReadByte()
+		if err != nil {
 			return err
 		}
 	}
