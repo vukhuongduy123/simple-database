@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"runtime/pprof"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/helper"
@@ -12,9 +13,40 @@ import (
 	"time"
 )
 
+func profiling() {
+	// At the start of main()
+	cpuProfile, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", err)
+	}
+	defer func(cpuProfile *os.File) {
+		err := cpuProfile.Close()
+		if err != nil {
+		}
+	}(cpuProfile)
+	if err := pprof.StartCPUProfile(cpuProfile); err != nil {
+		log.Fatal("could not start CPU prof: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
+	// At the end of main(), before exiting
+	memProfile, err := os.Create("mem.prof")
+	if err != nil {
+		log.Fatal("could not create memory prof: ", err)
+	}
+	defer func(memProfile *os.File) {
+		err := memProfile.Close()
+		if err != nil {
+		}
+	}(memProfile)
+	_ = pprof.WriteHeapProfile(memProfile)
+}
+
 func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
+	_ = os.Remove("mem.prof")
+	// profiling()
 
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
@@ -47,7 +79,7 @@ func main() {
 	{
 		start := time.Now()
 		for i := 0; i < 2000_000; i++ {
-			helper.Log.Debugf("Inserting user %d", i)
+			// helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
 				map[string]interface{}{
 					"id":       int64(i),
@@ -59,14 +91,14 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed insert: %s\n", elapsed)
+		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
 	}
 
 	{
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < 2000_000; i++ {
-			helper.Log.Debugf("Updating user %d", i)
+			// helper.Log.Debugf("Updating user %d", i)
 			whereClause := make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
@@ -77,7 +109,7 @@ func main() {
 			_, err = db.Tables["users"].Update(
 				table.SelectCommand{
 					WhereClause: whereClause,
-					Limit:       1,
+					Limit:       table.UnlimitedSize,
 				}, newValueMap)
 			if err != nil {
 				log.Fatal(err)
@@ -85,13 +117,13 @@ func main() {
 		}
 
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed update: %s\n", elapsed)
+		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
 	}
 
 	{
 		start := time.Now()
 		resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-			Limit: 1000000,
+			Limit: table.UnlimitedSize,
 			WhereClause: map[string]table.Comparator{
 				"username": {
 					Operator: datatype.OperatorEqual,
@@ -108,6 +140,30 @@ func main() {
 		for idx, result := range resultSet.Rows {
 			fmt.Printf("%d: %v\n", idx, result)
 		}
+	}
+
+	{
+		/*for i := 0; i < 2000_000; i++ {
+			start := time.Now()
+			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
+				Limit: 1000000,
+				WhereClause: map[string]table.Comparator{
+					"id": {
+						Operator: datatype.OperatorEqual,
+						Value:    int64(i),
+					},
+				},
+			})
+			if e != nil {
+				log.Fatal(e)
+			}
+
+			elapsed := time.Since(start)
+			fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
+			for idx, result := range resultSet.Rows {
+				fmt.Printf("%d: %v\n", idx, result)
+			}
+		}*/
 	}
 
 	defer func(db *internal.Database) {

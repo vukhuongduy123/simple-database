@@ -26,11 +26,12 @@ import (
 type Columns map[string]*column.Column
 
 const FileExtension = ".bin"
-const PageSize = 4096
 const UnlimitedSize = math.MaxUint32
 
 var lastPagePos int64 = -1
 var pageRegionPos int64 = -1
+
+const PageSize = 4096
 
 type Table struct {
 	Name            string
@@ -187,7 +188,7 @@ func NewTableWithColumns(file *os.File, columns Columns) (*Table, error) {
 
 func (t *Table) readColumnDefinitions() error {
 	if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
 	for {
@@ -212,7 +213,7 @@ func (t *Table) readColumnDefinitions() error {
 
 func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
-		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
 	if err := t.validateColumns(record); err != nil {
@@ -381,7 +382,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 
 			_, err := t.file.Seek(key.PagePos, stdio.SeekStart)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 			}
 
 			if !t.lru.Contains(pageKey) {
@@ -460,7 +461,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 func (t *Table) moveToFirstPageRegion() error {
 	if pageRegionPos == -1 {
 		if _, err := t.file.Seek(0, stdio.SeekStart); err != nil {
-			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 		if err := t.seekUntil(datatype.TypePage); err != nil {
 			return err
@@ -468,7 +469,7 @@ func (t *Table) moveToFirstPageRegion() error {
 		pageRegionPos, _ = t.file.Seek(0, stdio.SeekCurrent)
 	} else {
 		if _, err := t.file.Seek(pageRegionPos, stdio.SeekStart); err != nil {
-			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 	}
 
@@ -486,7 +487,7 @@ func (t *Table) seekUntil(targetType byte) error {
 		}
 		if dataType == targetType {
 			if _, err = t.file.Seek(-1*datatype.LenByte, stdio.SeekCurrent); err != nil {
-				return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 			}
 			return nil
 		}
@@ -507,7 +508,7 @@ func (t *Table) seekUntil(targetType byte) error {
 					datatype.TypeRecord, dataType), platformerror.InvalidDataTypeErrorCode)
 			}
 			if _, err = t.file.Seek(-1, stdio.SeekCurrent); err != nil {
-				return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 			}
 			return nil
 		}
@@ -518,7 +519,7 @@ func (t *Table) seekUntil(targetType byte) error {
 		}
 
 		if _, err = t.file.Seek(int64(length), stdio.SeekCurrent); err != nil {
-			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 	}
 }
@@ -538,7 +539,7 @@ func (t *Table) skipDeletedRecords() (dataType byte, err error) {
 				return 0, err
 			}
 			if _, err = t.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
-				return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 			}
 		}
 		if dataType == datatype.TypeRecord {
@@ -585,7 +586,7 @@ func (t *Table) ensureColumnLength(record tableparser.RecordValue) error {
 func (t *Table) markRecordsAsDeleted(deletableRecords []*DeletableRecord) (n int, e error) {
 	for _, rec := range deletableRecords {
 		if _, err := t.file.Seek(rec.offset, stdio.SeekStart); err != nil {
-			return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 		err := binary.Write(t.file, binary.LittleEndian, datatype.TypeDeletedRecord)
 		if err != nil {
@@ -620,7 +621,6 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 
 	command.Limit = UnlimitedSize
 	selectResult, err := t.Select(command)
-	helper.Log.Debugf("Select result: %+v", selectResult)
 	if err != nil {
 		return nil, err
 	}
@@ -641,7 +641,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 
 			pos, err := t.file.Seek(key.PagePos, stdio.SeekStart)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 			}
 
 			deletableRecord := newDeletableRecord(id, pos-int64(row.FullSize))
@@ -725,7 +725,7 @@ func GetPath(f *os.File) string {
 func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 	_, err := t.file.Seek(0, stdio.SeekStart)
 	if err != nil {
-		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
 	if lastPagePos == -1 {
@@ -764,7 +764,7 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 	if currPageLen+lenToFit <= PageSize {
 		pagePos, err := t.file.Seek(-1*datatype.LenMeta, stdio.SeekCurrent)
 		if err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 
 		_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
@@ -773,7 +773,7 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 	} else {
 		_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
 		if err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 		page, err := t.insertEmptyPage()
 		if err != nil {
@@ -809,7 +809,7 @@ func (t *Table) insertEmptyPage() (*index.Page, error) {
 
 	curPos, err := t.file.Seek(0, stdio.SeekCurrent)
 	if err != nil {
-		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 	// startPos should point at the very first byte, that is types.TypePage and 5 bytes before the current pos
 	startPos := curPos - (datatype.LenMeta)
@@ -835,7 +835,7 @@ func (t *Table) insertIntoPage(buf bytes.Buffer) (*index.Page, error) {
 	}
 	// seek back to the beginning of the page
 	if _, err = t.file.Seek(page.StartPos, stdio.SeekStart); err != nil {
-		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 	return page, t.updatePageSize(page.StartPos, int32(buf.Len()))
 }
@@ -845,7 +845,7 @@ func (t *Table) insertIntoPage(buf bytes.Buffer) (*index.Page, error) {
 func (t *Table) updatePageSize(page int64, offset int32) (e error) {
 	origPos, err := t.file.Seek(0, stdio.SeekCurrent)
 	if err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 	defer func() {
 		_, err := t.file.Seek(origPos, stdio.SeekStart)
@@ -853,7 +853,7 @@ func (t *Table) updatePageSize(page int64, offset int32) (e error) {
 	}()
 
 	if _, err = t.file.Seek(page, stdio.SeekStart); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
 	dataType, err := t.reader.ReadByte()
@@ -903,7 +903,7 @@ func (t *Table) updatePageSize(page int64, offset int32) (e error) {
 func (t *Table) removeEmptyPage(page int64) (e error) {
 	origPos, err := t.file.Seek(0, stdio.SeekCurrent)
 	if err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 	defer func() {
 		_, err := t.file.Seek(origPos, stdio.SeekStart)
@@ -911,7 +911,7 @@ func (t *Table) removeEmptyPage(page int64) (e error) {
 	}()
 
 	if _, err = t.file.Seek(page, stdio.SeekStart); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 	dataType, err := t.reader.ReadByte()
 	if err != nil {
@@ -946,7 +946,7 @@ func (t *Table) removeEmptyPage(page int64) (e error) {
 	}
 
 	if _, err = t.file.Seek(0, stdio.SeekStart); err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCodeCode)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
 	bw, err := t.file.Write(beforeBuf)

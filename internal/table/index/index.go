@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"simple-database/internal/platform"
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
@@ -13,7 +12,7 @@ import (
 )
 
 type Index struct {
-	tree   *platform.BTree
+	tree   *BTree
 	unique bool
 }
 
@@ -43,7 +42,10 @@ func NewItem(val, idVal any, pagePos int64) *Item {
 }
 
 func NewIndex(f string, unique bool) *Index {
-	t := platform.Open(f)
+	t, err := Open(f)
+	if err != nil {
+		panic(err)
+	}
 
 	return &Index{tree: t, unique: unique}
 }
@@ -201,8 +203,8 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		return nil, err
 	}
 
-	keys := make([]*platform.Item, 0)
-	var key *platform.Item
+	keys := make([]*KeyValuePair, 0)
+	var key *KeyValuePair
 
 	switch op {
 	case datatype.OperatorEqual:

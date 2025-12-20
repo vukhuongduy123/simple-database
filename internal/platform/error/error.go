@@ -17,7 +17,7 @@ const (
 	BinaryReadErrorCode
 	InvalidNameLengthErrorCode
 	OpenFileErrorCode
-	FileSeekErrorCodeCode
+	FileSeekErrorCode
 	InvalidDataTypeErrorCode
 	InvalidTableName
 	MissingColumnErrorCode

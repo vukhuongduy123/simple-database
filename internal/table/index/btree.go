@@ -1,7 +1,11 @@
-package platform
+package index
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
+	platformerror "simple-database/internal/platform/error"
+	"simple-database/internal/platform/helper"
 )
 
 const (
@@ -11,16 +15,32 @@ const (
 	minItems    = degree - 1
 )
 
-type Item struct {
+const (
+	maxKeySize = 1024
+	maxValSize = 1024
+)
+
+const pageSize = maxItems * maxKeySize
+
+type KeyValuePair struct {
 	Key []byte
 	Val []byte
 }
 
 type node struct {
-	items       [maxItems]*Item
-	children    [maxChildren]*node
+	items       [maxItems]*KeyValuePair
+	children    [maxChildren]int64
 	numItems    int
 	numChildren int
+	pageNumber  int64
+}
+
+func (n *node) UnmarshalBinary(data []byte) error {
+
+}
+
+func (n *node) MarshalBinary() ([]byte, error) {
+
 }
 
 func (n *node) isLeaf() bool {
@@ -45,7 +65,7 @@ func (n *node) search(key []byte) (int, bool) {
 	return low, false
 }
 
-func (n *node) insertItemAt(pos int, i *Item) {
+func (n *node) insertItemAt(pos int, i *KeyValuePair) {
 	if pos < n.numItems {
 		// Make space for insertion if we are not appending to the very end of the Item array.
 		copy(n.items[pos+1:n.numItems+1], n.items[pos:n.numItems])
@@ -59,11 +79,11 @@ func (n *node) insertChildAt(pos int, c *node) {
 		// Make space for insertion if we are not appending to the very end of the children array.
 		copy(n.children[pos+1:n.numChildren+1], n.children[pos:n.numChildren])
 	}
-	n.children[pos] = c
+	n.children[pos] = c.pageNumber
 	n.numChildren++
 }
 
-func (n *node) split() (*Item, *node) {
+func (n *node) split() (*KeyValuePair, *node) {
 	// Retrieve the middle Item.
 	mid := minItems
 	midItem := n.items[mid]
@@ -85,7 +105,7 @@ func (n *node) split() (*Item, *node) {
 		n.numItems--
 
 		if !n.isLeaf() {
-			n.children[i+1] = nil
+			n.children[i+1] = -1
 			n.numChildren--
 		}
 	}
@@ -94,7 +114,7 @@ func (n *node) split() (*Item, *node) {
 	return midItem, newNode
 }
 
-func (n *node) insert(item *Item) bool {
+func (n *node) insert(item *KeyValuePair, p *Pager) bool {
 	pos, found := n.search(item.Key)
 
 	// The data Item already exists, so just update its value.
@@ -110,8 +130,14 @@ func (n *node) insert(item *Item) bool {
 	}
 
 	// If the next node along the path of the traversal is already full, split it.
-	if n.children[pos].numItems >= maxItems {
-		midItem, newNode := n.children[pos].split()
+	childNode, err := p.read(n.children[pos])
+	if err != nil {
+		helper.Log.Errorf("Failed to read child node: %s", err.Error())
+		panic(err)
+	}
+
+	if childNode.numItems >= maxItems {
+		midItem, newNode := childNode.split()
 		n.insertItemAt(pos, midItem)
 		n.insertChildAt(pos+1, newNode)
 		// We may need to change our direction after promoting the middle Item to the parent, depending on its Key.
@@ -128,13 +154,12 @@ func (n *node) insert(item *Item) bool {
 			n.items[pos] = item
 			return true
 		}
-
 	}
 
-	return n.children[pos].insert(item)
+	return childNode.insert(item, p)
 }
 
-func (n *node) removeItemAt(pos int) *Item {
+func (n *node) removeItemAt(pos int) *KeyValuePair {
 	removedItem := n.items[pos]
 	n.items[pos] = nil
 	// Fill the gap if the position we are removing from is not the very last occupied position in the "items" array.
@@ -147,47 +172,68 @@ func (n *node) removeItemAt(pos int) *Item {
 	return removedItem
 }
 
-func (n *node) removeChildAt(pos int) *node {
+func (n *node) removeChildAt(pos int, p *Pager) *node {
 	removedChild := n.children[pos]
-	n.children[pos] = nil
+	n.children[pos] = -1
 	// Fill the gap if the position we are removing from is not the very last occupied position in the "children" array.
 	if lastPos := n.numChildren - 1; pos < lastPos {
 		copy(n.children[pos:lastPos], n.children[pos+1:lastPos+1])
-		n.children[lastPos] = nil
+		n.children[lastPos] = -1
 	}
 	n.numChildren--
 
-	return removedChild
+	removedNode, err := p.read(removedChild)
+	if err != nil {
+		helper.Log.Errorf("Failed to read child node: %s", err.Error())
+		panic(err)
+	}
+	return removedNode
 }
 
-func (n *node) fillChildAt(pos int) {
+func (n *node) fillChildAt(pos int, p *Pager) {
+	prevChild, err := p.read(n.children[pos-1])
+	if err != nil {
+		helper.Log.Errorf("Failed to read child node: %s", err.Error())
+		panic(err)
+	}
+	curChild, err := p.read(n.children[pos])
+	if err != nil {
+		helper.Log.Errorf("Failed to read child node: %s", err.Error())
+		panic(err)
+	}
+	nextChild, err := p.read(n.children[pos+1])
+	if err != nil {
+		helper.Log.Errorf("Failed to read child node: %s", err.Error())
+		panic(err)
+	}
+
 	switch {
 	// Borrow the right-most Item from the left sibling if the left
 	// sibling exists and has more than the minimum number of items.
-	case pos > 0 && n.children[pos-1].numItems > minItems:
+	case pos > 0 && prevChild.numItems > minItems:
 		// Establish our left and right nodes.
-		left, right := n.children[pos-1], n.children[pos]
+		left, right := prevChild, curChild
 		// Take the Item from the parent and place it at the left-most position of the right node.
 		copy(right.items[1:right.numItems+1], right.items[:right.numItems])
 		right.items[0] = n.items[pos-1]
 		right.numItems++
 		// For non-leaf nodes, make the right-most child of the left node the new left-most child of the right node.
 		if !right.isLeaf() {
-			right.insertChildAt(0, left.removeChildAt(left.numChildren-1))
+			right.insertChildAt(0, left.removeChildAt(left.numChildren-1, p))
 		}
 		// Borrow the right-most Item from the left node to replace the parent Item.
 		n.items[pos-1] = left.removeItemAt(left.numItems - 1)
 	// Borrow the left-most Item from the right sibling if the right
 	// sibling exists and has more than the minimum number of items.
-	case pos < n.numChildren-1 && n.children[pos+1].numItems > minItems:
+	case pos < n.numChildren-1 && nextChild.numItems > minItems:
 		// Establish our left and right nodes.
-		left, right := n.children[pos], n.children[pos+1]
+		left, right := curChild, nextChild
 		// Take the Item from the parent and place it at the right-most position of the left node.
 		left.items[left.numItems] = n.items[pos]
 		left.numItems++
 		// For non-leaf nodes, make the left-most child of the right node the new right-most child of the left node.
 		if !left.isLeaf() {
-			left.insertChildAt(left.numChildren, right.removeChildAt(0))
+			left.insertChildAt(left.numChildren, right.removeChildAt(0, p))
 		}
 		// Borrow the left-most Item from the right node to replace the parent Item.
 		n.items[pos] = right.removeItemAt(0)
@@ -199,7 +245,7 @@ func (n *node) fillChildAt(pos int) {
 			pos = n.numItems - 1
 		}
 		// Establish our left and right nodes.
-		left, right := n.children[pos], n.children[pos+1]
+		left, right := curChild, nextChild
 		// Borrow an Item from the parent node and place it at the right-most available position of the left node.
 		left.items[left.numItems] = n.removeItemAt(pos)
 		left.numItems++
@@ -212,12 +258,12 @@ func (n *node) fillChildAt(pos int) {
 			left.numChildren += right.numChildren
 		}
 		// Remove the child pointer from the parent to the right node and discard the right node.
-		n.removeChildAt(pos + 1)
+		n.removeChildAt(pos+1, p)
 		right = nil
 	}
 }
 
-func (n *node) delete(key []byte, isSeekingSuccessor bool) *Item {
+func (n *node) delete(key []byte, isSeekingSuccessor bool, p *Pager) *KeyValuePair {
 	pos, found := n.search(key)
 
 	var next *node
@@ -229,9 +275,19 @@ func (n *node) delete(key []byte, isSeekingSuccessor bool) *Item {
 			return n.removeItemAt(pos)
 		}
 		// This is not a leaf node, so we have to find the inorder successor.
-		next, isSeekingSuccessor = n.children[pos+1], true
+		n, err := p.read(n.children[pos+1])
+		if err != nil {
+			helper.Log.Errorf("Failed to read child node: %s", err.Error())
+			panic(err)
+		}
+		next, isSeekingSuccessor = n, true
 	} else {
-		next = n.children[pos]
+		n, err := p.read(n.children[pos])
+		if err != nil {
+			helper.Log.Errorf("Failed to read child node: %s", err.Error())
+			panic(err)
+		}
+		next = n
 	}
 
 	// We have reached the leaf node containing the inorder successor, so remove the successor from the leaf.
@@ -245,7 +301,7 @@ func (n *node) delete(key []byte, isSeekingSuccessor bool) *Item {
 	}
 
 	// Continue traversing the tree to find an Item matching the supplied Key.
-	deletedItem := next.delete(key, isSeekingSuccessor)
+	deletedItem := next.delete(key, isSeekingSuccessor, p)
 
 	// We found the inorder successor, and we are now back at the internal node containing the Item
 	// matching the supplied Key. Therefore, we replace the Item with its inorder successor, effectively
@@ -258,9 +314,9 @@ func (n *node) delete(key []byte, isSeekingSuccessor bool) *Item {
 	if next.numItems < minItems {
 		// Repair the underflow.
 		if found && isSeekingSuccessor {
-			n.fillChildAt(pos + 1)
+			n.fillChildAt(pos+1, p)
 		} else {
-			n.fillChildAt(pos)
+			n.fillChildAt(pos, p)
 		}
 	}
 
@@ -269,51 +325,85 @@ func (n *node) delete(key []byte, isSeekingSuccessor bool) *Item {
 }
 
 type BTree struct {
-	root *node
+	pager *Pager
 }
 
-func Open(f string) *BTree {
-	return &BTree{}
+func Open(f string) (*BTree, error) {
+	if f == "" {
+		helper.Log.Errorf("File name is empty")
+		return nil, platformerror.NewStackTraceError("Invalid index file path", platformerror.InvalidTableName)
+	}
+
+	err := os.MkdirAll(filepath.Dir(f), os.ModePerm)
+	if err != nil {
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
+	}
+
+	file, err := os.OpenFile(f, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
+	}
+
+	return &BTree{pager: NewPager(file, pageSize)}, nil
 }
 
-func (t *BTree) Get(key []byte) *Item {
-	for next := t.root; next != nil; {
+func (t *BTree) Get(key []byte) *KeyValuePair {
+	for next, err := t.pager.read(0); next != nil || err != nil; {
+		if err != nil {
+			helper.Log.Errorf("Failed to read root node: %s", err.Error())
+			panic(err)
+		}
+
 		pos, found := next.search(key)
 
 		if found {
 			return next.items[pos]
 		}
 
-		next = next.children[pos]
+		next, err = t.pager.read(next.children[pos].pageNumber)
+		if err != nil {
+			helper.Log.Errorf("Failed to read child node: %s", err.Error())
+			panic(err)
+		}
 	}
 
 	return nil
 }
 
 func (t *BTree) Insert(key, val []byte) {
-	i := &Item{key, val}
+	if len(key) > maxKeySize || len(val) > maxValSize {
+		helper.Log.Errorf("Key or value size is too big: %d, %d", len(key), len(val))
+		return
+	}
+
+	i := &KeyValuePair{key, val}
 
 	// The tree is empty, so initialize a new node.
-	if t.root == nil {
-		t.root = &node{}
+	root, err := t.pager.read(0)
+	if err != nil {
+		helper.Log.Errorf("Failed to read root node: %s", err.Error())
+		panic(err)
+	}
+	if root == nil {
+		root = &node{}
 	}
 
 	// The tree root is full, so perform a split on the root.
-	if t.root.numItems >= maxItems {
-		t.splitRoot()
+	if root.numItems >= maxItems {
+		splitRoot(root)
 	}
 
 	// Begin insertion.
-	t.root.insert(i)
+	root.insert(i, t.pager)
 }
 
-func (t *BTree) splitRoot() {
+func splitRoot(root *node) {
 	newRoot := &node{}
-	midItem, newNode := t.root.split()
+	midItem, newNode := root.split()
 	newRoot.insertItemAt(0, midItem)
-	newRoot.insertChildAt(0, t.root)
+	newRoot.insertChildAt(0, root)
 	newRoot.insertChildAt(1, newNode)
-	t.root = newRoot
+	root = newRoot
 }
 
 func (t *BTree) Delete(key []byte) bool {
@@ -336,13 +426,13 @@ func (t *BTree) Delete(key []byte) bool {
 	return false
 }
 
-func (n *node) greaterThanOrEqual(key []byte) []*Item {
+func (n *node) greaterThanOrEqual(key []byte) []*KeyValuePair {
 	if n == nil {
 		return nil
 	}
 
 	pos, _ := n.search(key)
-	result := make([]*Item, 0)
+	result := make([]*KeyValuePair, 0)
 	for i := pos; i < n.numItems; i++ {
 		if !n.isLeaf() {
 			result = append(result, n.children[i].greaterThanOrEqual(key)...)
@@ -358,20 +448,20 @@ func (n *node) greaterThanOrEqual(key []byte) []*Item {
 	return result
 }
 
-func (t *BTree) GreaterThanOrEqual(key []byte) []*Item {
+func (t *BTree) GreaterThanOrEqual(key []byte) []*KeyValuePair {
 	if t.root == nil {
 		return nil
 	}
 	return t.root.greaterThanOrEqual(key)
 }
 
-func (n *node) lessThanOrEqual(key []byte) []*Item {
+func (n *node) lessThanOrEqual(key []byte) []*KeyValuePair {
 	if n == nil {
 		return nil
 	}
 
 	pos, _ := n.search(key)
-	result := make([]*Item, 0)
+	result := make([]*KeyValuePair, 0)
 	for i := 0; i < pos; i++ {
 		if !n.isLeaf() {
 			result = append(result, n.children[i].lessThanOrEqual(key)...)
@@ -387,14 +477,14 @@ func (n *node) lessThanOrEqual(key []byte) []*Item {
 	return result
 }
 
-func (t *BTree) LessThanOrEqual(key []byte) []*Item {
+func (t *BTree) LessThanOrEqual(key []byte) []*KeyValuePair {
 	if t.root == nil {
 		return nil
 	}
 	return t.root.lessThanOrEqual(key)
 }
 
-func (n *node) lessThan(key []byte) []*Item {
+func (n *node) lessThan(key []byte) []*KeyValuePair {
 	if n == nil {
 		return nil
 	}
@@ -404,7 +494,7 @@ func (n *node) lessThan(key []byte) []*Item {
 		pos--
 	}
 
-	result := make([]*Item, 0)
+	result := make([]*KeyValuePair, 0)
 	if pos < 0 {
 		return result
 	}
@@ -424,20 +514,20 @@ func (n *node) lessThan(key []byte) []*Item {
 	return result
 }
 
-func (t *BTree) LessThan(key []byte) []*Item {
+func (t *BTree) LessThan(key []byte) []*KeyValuePair {
 	if t.root == nil {
 		return nil
 	}
 	return t.root.lessThan(key)
 }
 
-func (n *node) greaterThan(key []byte) []*Item {
+func (n *node) greaterThan(key []byte) []*KeyValuePair {
 	if n == nil {
 		return nil
 	}
 
 	pos, found := n.search(key)
-	result := make([]*Item, 0)
+	result := make([]*KeyValuePair, 0)
 
 	for i := pos; i < n.numItems; i++ {
 		if !n.isLeaf() {
@@ -458,7 +548,7 @@ func (n *node) greaterThan(key []byte) []*Item {
 	return result
 }
 
-func (t *BTree) GreaterThan(key []byte) []*Item {
+func (t *BTree) GreaterThan(key []byte) []*KeyValuePair {
 	if t.root == nil {
 		return nil
 	}
