@@ -8,10 +8,11 @@ import (
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
 	platformparser "simple-database/internal/platform/parser"
+	"simple-database/internal/table/btree"
 )
 
 type Index struct {
-	tree   *BTree
+	tree   *btree.BTree
 	unique bool
 }
 
@@ -41,7 +42,7 @@ func NewItem(val, idVal any, pagePos int64) *Item {
 }
 
 func NewIndex(f string, unique bool) *Index {
-	t, err := Open(f)
+	t, err := btree.Open(f)
 	if err != nil {
 		panic(err)
 	}
@@ -208,8 +209,8 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		return nil, err
 	}
 
-	keys := make([]*Key, 0)
-	var key *Key
+	keys := make([]*btree.Key, 0)
+	var key *btree.Key
 
 	switch op {
 	case datatype.OperatorEqual:
