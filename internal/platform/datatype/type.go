@@ -2,14 +2,16 @@ package datatype
 
 //goland:noinspection GoUnusedConst
 const (
-	TypeInt64            byte = 1
+	TypeInt64            byte = 10
 	TypeString           byte = 2
 	TypeByte             byte = 3
 	TypeBool             byte = 4
 	TypeInt32            byte = 5
+	TypeByteArray        byte = 6
 	TypeColumnDefinition byte = 99
 	TypeRecord           byte = 100
 	TypeDeletedRecord    byte = 101
+	TypeBTreeKeyValue    byte = 102
 	TypePage             byte = 255
 	TypeIndex            byte = 254
 	TypeIndexItem        byte = 253

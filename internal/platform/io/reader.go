@@ -26,7 +26,8 @@ func (r *Reader) Read(b []byte) (int, error) {
 		return 0, err
 	}
 	if n != len(b) {
-		return n, platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, get %d", len(b), n), platformerror.IncompleteReadErrorCode)
+		return n, platformerror.NewStackTraceError(fmt.Sprintf("Expected %d, get %d for %v", len(b), n, b),
+			platformerror.IncompleteReadErrorCode)
 	}
 	return n, nil
 }
@@ -67,4 +68,12 @@ func (r *Reader) ReadTLV() ([]byte, error) {
 	}
 	buf.Write(valBuf)
 	return buf.Bytes(), nil
+}
+
+func (r *Reader) ReadUInt64() (uint64, error) {
+	buf := make([]byte, datatype.LenInt64)
+	if _, err := r.Read(buf); err != nil {
+		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.IncompleteReadErrorCode)
+	}
+	return binary.LittleEndian.Uint64(buf), nil
 }

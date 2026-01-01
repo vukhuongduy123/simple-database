@@ -3,7 +3,6 @@ package index
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
@@ -151,7 +150,10 @@ func (i *Index) Add(val, id any, pagePos int64) error {
 		}
 	}
 
-	i.tree.Insert(valBuf, itemBuf)
+	err = i.tree.Put(valBuf, itemBuf)
+	if err != nil {
+		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+	}
 	return nil
 }
 
@@ -166,7 +168,10 @@ func (i *Index) Remove(key, idVal any) error {
 		return err
 	}
 
-	i.tree.Delete(valBuf)
+	err = i.tree.Delete(valBuf)
+	if err != nil {
+		return err
+	}
 
 	// TODO: handle if index is a list
 	// itemsToRemove := make([][]byte, 0)
@@ -203,26 +208,41 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		return nil, err
 	}
 
-	keys := make([]*KeyValuePair, 0)
-	var key *KeyValuePair
+	keys := make([]*Key, 0)
+	var key *Key
 
 	switch op {
 	case datatype.OperatorEqual:
-		key = i.tree.Get(valBuf)
+		key, err = i.tree.Get(valBuf)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		}
 		if key == nil {
 			return nil, nil
 		}
 		keys = append(keys, key)
 	case datatype.OperatorGreater:
-		keys = i.tree.GreaterThan(valBuf)
+		keys, err = i.tree.GreaterThan(valBuf)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		}
 	case datatype.OperatorLess:
-		keys = i.tree.LessThan(valBuf)
+		keys, err = i.tree.LessThan(valBuf)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		}
 	case datatype.OperatorGreaterOrEqual:
-		keys = i.tree.GreaterThanOrEqual(valBuf)
+		keys, err = i.tree.GreaterThanEq(valBuf)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		}
 	case datatype.OperatorLessOrEqual:
-		keys = i.tree.LessThanOrEqual(valBuf)
+		keys, err = i.tree.LessThanEq(valBuf)
+		if err != nil {
+			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		}
 	case datatype.OperatorNotEqual:
-		return nil, errors.ErrUnsupported
+		keys, err = i.tree.NotEqual(valBuf)
 	default:
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
 	}
@@ -234,14 +254,14 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 	}
 
 	for _, k := range keys {
-		item := Item{}
-		err = item.UnmarshalBinary(k.Val)
-		if err != nil {
-			return nil, err
+		for _, v := range k.V {
+			item := Item{}
+			err = item.UnmarshalBinary(v)
+			if err != nil {
+				return nil, err
+			}
+			items = append(items, item)
 		}
-
-		items = append(items, item)
-
 	}
 
 	return items, nil

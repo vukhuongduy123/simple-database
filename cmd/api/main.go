@@ -46,7 +46,7 @@ func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
-	// profiling()
+	profiling()
 
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
@@ -79,7 +79,7 @@ func main() {
 	{
 		start := time.Now()
 		for i := 0; i < 2000_000; i++ {
-			// helper.Log.Debugf("Inserting user %d", i)
+			helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
 				map[string]interface{}{
 					"id":       int64(i),
@@ -87,7 +87,7 @@ func main() {
 				},
 			)
 			if err != nil {
-				fmt.Println(err)
+				panic(err)
 			}
 		}
 		elapsed := time.Since(start)
@@ -98,7 +98,7 @@ func main() {
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < 2000_000; i++ {
-			// helper.Log.Debugf("Updating user %d", i)
+			helper.Log.Debugf("Updating user %d", i)
 			whereClause := make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
@@ -143,7 +143,7 @@ func main() {
 	}
 
 	{
-		/*for i := 0; i < 2000_000; i++ {
+		for i := 0; i < 2000_000; i++ {
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 				Limit: 1000000,
@@ -163,13 +163,12 @@ func main() {
 			for idx, result := range resultSet.Rows {
 				fmt.Printf("%d: %v\n", idx, result)
 			}
-		}*/
+		}
 	}
 
 	defer func(db *internal.Database) {
 		err := db.Close()
 		if err != nil {
-
 		}
 	}(db)
 }

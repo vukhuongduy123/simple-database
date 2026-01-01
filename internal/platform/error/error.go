@@ -31,6 +31,8 @@ const (
 	CloseErrorCode
 	InvalidNumberOfPrimaryKeysErrorCode
 	UniqueIndexViolationErrorCode
+	BTreeReadError
+	BTreeWriteError
 )
 
 // StackTraceError wraps any error and captures a stack trace

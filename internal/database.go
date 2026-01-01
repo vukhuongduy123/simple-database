@@ -8,6 +8,7 @@ import (
 	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
 	"simple-database/internal/table/column"
+	"strings"
 )
 
 const (
@@ -88,6 +89,11 @@ func (db *Database) readTables() (Tables, error) {
 		if _, err := v.Info(); err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 		}
+
+		if strings.HasSuffix(v.Name(), "_idx.bin") || strings.HasSuffix(v.Name(), "_idx.bin.del") {
+			continue
+		}
+
 		f, err := os.OpenFile(filepath.Join(db.path, v.Name()), os.O_RDWR, 0777)
 		if err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
