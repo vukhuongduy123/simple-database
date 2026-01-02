@@ -5,12 +5,7 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
-	"simple-database/internal"
-	"simple-database/internal/platform/datatype"
-	"simple-database/internal/platform/helper"
-	"simple-database/internal/table"
-	"simple-database/internal/table/column"
-	"time"
+	"simple-database/internal/table/btree2"
 )
 
 func profiling() {
@@ -42,13 +37,37 @@ func profiling() {
 	_ = pprof.WriteHeapProfile(memProfile)
 }
 
+func testBree() {
+	os.MkdirAll("data/test", 0777)
+	b, err := btree2.Open("data/test/mydb")
+	if err != nil {
+		log.Fatal(err)
+	}
+	arr := []string{
+		"F", "S", "Q", "K", "C", "L", "H", "T", "V", "W",
+		"M", "R", "N", "P", "A", "B", "X", "Y", "D", "Z", "E",
+	}
+
+	for _, v := range arr {
+		fmt.Println("Inserting ", v, "")
+		err = b.Insert([]byte(v), []byte(v))
+		if err != nil {
+			log.Fatal(err)
+		}
+		_ = b.PrintTree()
+		fmt.Println()
+	}
+
+}
+
 func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
 	profiling()
+	testBree()
 
-	db, err := internal.CreateDatabase("my_db")
+	/*db, err := internal.CreateDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -170,5 +189,5 @@ func main() {
 		err := db.Close()
 		if err != nil {
 		}
-	}(db)
+	}(db)*/
 }

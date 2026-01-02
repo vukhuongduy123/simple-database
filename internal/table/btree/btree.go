@@ -513,7 +513,6 @@ func (b *BTree) Get(k []byte) (*Key, error) {
 	}
 
 	return b.searchRecursive(root, k)
-
 }
 
 // searchRecursive searches for a key in the BTree

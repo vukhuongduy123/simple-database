@@ -72,7 +72,7 @@ func (m *TLVMarshaler[T]) dataLength() (uint32, error) {
 	case string:
 		return uint32(len(v)), nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Uknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Uknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -115,7 +115,7 @@ func (m *TLVMarshaler[T]) typeFlag() (byte, error) {
 	case string:
 		return datatype.TypeString, nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -132,7 +132,7 @@ func (m *TLVMarshaler[T]) TLVLength() (uint32, error) {
 	case string:
 		return datatype.LenMeta + uint32(len(v)), nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %T", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 

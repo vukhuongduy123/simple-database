@@ -56,7 +56,7 @@ func Compare(a, b any, op string) bool {
 		vb, ok := b.(string)
 		return ok && compareScalar(va, vb, op)
 	default:
-		panic(fmt.Sprintf("unsupported type: %T", a))
+		panic(fmt.Sprintf("unsupported type: %Degree", a))
 	}
 }
 
