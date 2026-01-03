@@ -189,7 +189,7 @@ func (b *BTree) get(keyVal []byte, curNode *Node) (Key, bool, error) {
 		i++
 	}
 
-	if i <= len(curNode.Keys) && bytes.Compare(keyVal, curNode.Keys[i-1].K) == 0 {
+	if i <= len(curNode.Keys) && bytes.Compare(keyVal, curNode.Keys[i].K) == 0 {
 		return *curNode.Keys[i], true, nil
 	}
 
@@ -390,7 +390,33 @@ func (b *BTree) Remove(keyData []byte) error {
 		return err
 	}
 
-	return b.remove(root, keyData)
+	err = b.remove(root, keyData)
+	if err != nil {
+		return err
+	}
+
+	root, err = b.getRoot()
+	if err != nil {
+		return err
+	}
+
+	if len(root.Keys) == 0 && !root.Leaf {
+		// Root has exactly one child
+		child, err := b.readFromDisk(root.Children[0])
+		if err != nil {
+			return err
+		}
+
+		// Copy child's CONTENT into root (page 0)
+		root.Keys = child.Keys
+		root.Children = child.Children
+		root.Leaf = child.Leaf
+
+		// Persist updated root
+		return b.writeToDisk(root)
+	}
+
+	return nil
 }
 
 // RemoveAt removes the element at index i from slice s.
@@ -406,28 +432,220 @@ func (b *BTree) remove(curNode *Node, keyData []byte) error {
 		i++
 	}
 
-	if i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i-1].K) == 0 {
+	if i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i].K) == 0 {
 		found = true
 	}
 
 	if found {
+		// Case: node is a left
 		if curNode.Leaf {
 			curNode.Keys = removeAt(curNode.Keys, i)
-		}
+			if err := b.writeToDisk(curNode); err != nil {
+				return err
+			}
+		} else { // Case: node is an internal node
+			leftChild, err := b.readFromDisk(curNode.Children[i])
+			if err != nil {
+				return err
+			}
+			// Case: left child has at least t keys
+			if len(leftChild.Keys) >= b.Degree {
+				predecessorNode, err := b.getPredecessor(leftChild)
+				if err != nil {
+					return err
+				}
+				predecessorKey := predecessorNode.Keys[len(predecessorNode.Keys)-1]
+				curNode.Keys[i] = predecessorKey
+				if err := b.writeToDisk(curNode); err != nil {
+					return err
+				}
 
-		if err := b.writeToDisk(curNode); err != nil {
-			return err
+				return b.remove(leftChild, predecessorKey.K)
+			}
+
+			rightChild, err := b.readFromDisk(curNode.Children[i+1])
+			if err != nil {
+				return err
+			}
+			// Case: right child has at least t keys
+			if len(rightChild.Keys) >= b.Degree {
+				successorNode, err := b.getSuccessor(rightChild)
+				if err != nil {
+					return err
+				}
+				successorKey := successorNode.Keys[0]
+				curNode.Keys[i] = successorKey
+				if err := b.writeToDisk(curNode); err != nil {
+					return err
+				}
+
+				return b.remove(rightChild, successorKey.K)
+			}
+
+			// Case: both children have t-1 keys
+			err = b.mergeChild(curNode, i)
+			if err != nil {
+				return err
+			}
+			mergedChild, err := b.readFromDisk(curNode.Children[i])
+			if err != nil {
+				return err
+			}
+			return b.remove(mergedChild, keyData)
 		}
 	} else {
 		if curNode.Leaf {
 			return nil
 		}
+		child, err := b.readFromDisk(curNode.Children[i])
+		if err != nil {
+			return err
+		}
+
+		// if a child has only t-1 keys, we need to ensure it has at least t keys
+		if len(child.Keys) == b.Degree-1 {
+			var leftSibling *Node = nil
+			if i > 0 {
+				leftSibling, err = b.readFromDisk(curNode.Children[i-1])
+				if err != nil {
+					return err
+				}
+			}
+
+			var rightSibling *Node = nil
+			if i < len(curNode.Children)-1 {
+				rightSibling, err = b.readFromDisk(curNode.Children[i+1])
+				if err != nil {
+					return err
+				}
+			}
+
+			// Case: borrow from left sibling
+			if leftSibling != nil && len(leftSibling.Keys) >= b.Degree {
+				// Move parent's separator key down to child (front)
+				child.Keys = addElementAt(child.Keys, 0, curNode.Keys[i-1])
+
+				// If internal node, move a rightmost child pointer
+				if !leftSibling.Leaf {
+					child.Children = addElementAt(child.Children, 0, leftSibling.Children[len(leftSibling.Children)-1])
+					leftSibling.Children = leftSibling.Children[:len(leftSibling.Children)-1]
+				}
+
+				// Move left sibling's rightmost key up to parent
+				curNode.Keys[i-1] = leftSibling.Keys[len(leftSibling.Keys)-1]
+
+				// Remove key from left sibling
+				leftSibling.Keys = leftSibling.Keys[:len(leftSibling.Keys)-1]
+				if err := b.writeToDisk(curNode); err != nil {
+					return err
+				}
+				if err := b.writeToDisk(leftSibling); err != nil {
+					return err
+				}
+				if err := b.writeToDisk(child); err != nil {
+					return err
+				}
+			} else if rightSibling != nil && len(rightSibling.Keys) >= b.Degree { // Case: borrow from the right sibling
+				// Move parent's separator key down to the child (append at the end)
+				child.Keys = append(child.Keys, curNode.Keys[i])
+
+				// Replace parent's separator with right sibling's first key
+				curNode.Keys[i] = rightSibling.Keys[0]
+
+				// Remove the borrowed key from the right sibling
+				rightSibling.Keys = rightSibling.Keys[1:]
+
+				// If internal node, move the first child pointer from the right sibling
+				if !rightSibling.Leaf {
+					child.Children = append(child.Children, rightSibling.Children[0])
+					rightSibling.Children = rightSibling.Children[1:]
+				}
+				if err := b.writeToDisk(curNode); err != nil {
+					return err
+				}
+				if err := b.writeToDisk(rightSibling); err != nil {
+					return err
+				}
+				if err := b.writeToDisk(child); err != nil {
+					return err
+				}
+			} else if leftSibling != nil { // Case: merge left siblings
+				err = b.mergeChild(curNode, i-1)
+				child = leftSibling
+			} else if rightSibling != nil { // Case: merge right sibling
+				err = b.mergeChild(curNode, i)
+				child = rightSibling
+			}
+		}
+		return b.remove(child, keyData)
 	}
 
 	return nil
 }
 
+func (b *BTree) mergeChild(x *Node, i int) error {
+	y, err := b.readFromDisk(x.Children[i]) // left child
+	if err != nil {
+		return err
+	}
+	z, err := b.readFromDisk(x.Children[i+1]) // right child
+	if err != nil {
+		return err
+	}
+
+	// 1. Move the separator key from parent into y
+	y.Keys = append(y.Keys, x.Keys[i])
+
+	// 2. Append all keys from z into y
+	y.Keys = append(y.Keys, z.Keys...)
+
+	// 3. Append children from z if internal node
+	if !y.Leaf {
+		y.Children = append(y.Children, z.Children...)
+	}
+
+	// 4. Remove key i from parent x
+	x.Keys = removeAt(x.Keys, i)
+
+	// 5. Remove child z (i+1) from parent x
+	x.Children = removeAt(x.Children, i+1)
+
+	if err = b.writeToDisk(y); err != nil {
+		return err
+	}
+	if err = b.writeToDisk(x); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (b *BTree) getPredecessor(n *Node) (*Node, error) {
+	currentNode := n
+	for !currentNode.Leaf {
+		nextNode, err := b.readFromDisk(currentNode.Children[len(currentNode.Children)-1])
+		if err != nil {
+			return nil, err
+		}
+		currentNode = nextNode
+	}
+	return currentNode, nil
+}
+
+func (b *BTree) getSuccessor(n *Node) (*Node, error) {
+	currentNode := n
+	for !currentNode.Leaf {
+		nextNode, err := b.readFromDisk(currentNode.Children[0])
+		if err != nil {
+			return nil, err
+		}
+		currentNode = nextNode
+	}
+	return currentNode, nil
+}
+
 func (b *BTree) writeToDisk(n *Node) error {
+	fmt.Println(n)
 	encodedCurNode, err := encodeNode(n)
 	if err != nil {
 		return err
