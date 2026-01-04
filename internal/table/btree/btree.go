@@ -14,7 +14,6 @@ type BTree struct {
 }
 
 type Key struct {
-	// TODO: add unique constraint to show that the key is unique for non-unique index
 	K []byte // The key
 	V []byte // The values
 }

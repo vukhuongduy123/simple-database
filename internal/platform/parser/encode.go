@@ -115,7 +115,7 @@ func (m *TLVMarshaler[T]) typeFlag() (byte, error) {
 	case string:
 		return datatype.TypeString, nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %v", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 

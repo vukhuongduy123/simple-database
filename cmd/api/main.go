@@ -6,7 +6,13 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
+	"simple-database/internal"
+	"simple-database/internal/platform/datatype"
+	"simple-database/internal/platform/helper"
+	"simple-database/internal/table"
 	"simple-database/internal/table/btree"
+	"simple-database/internal/table/column"
+	"time"
 )
 
 func profiling() {
@@ -66,25 +72,6 @@ func testBree() {
 	}
 	fmt.Println("Size of btree", size)
 
-	/*for i := 0; i < 2000_000; i++ {
-		if i%1000 == 0 {
-			fmt.Println(i)
-		}
-		err = b.Remove([]byte(fmt.Sprint(i)))
-		if err != nil {
-			log.Fatal(err)
-		}
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(-i))
-		err = b.Insert(buf, buf)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}
-	size, err = b.Size()
-	if err != nil {
-		log.Fatal(err)
-	}*/
 	fmt.Println("Size of btree", size)
 	for i := 0; i < 1000; i++ {
 		buf := make([]byte, 8)
@@ -139,10 +126,10 @@ func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
-	// profiling()
-	testBree()
+	profiling()
+	// testBree()
 
-	/*db, err := internal.CreateDatabase("my_db")
+	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -264,5 +251,5 @@ func main() {
 		err := db.Close()
 		if err != nil {
 		}
-	}(db)*/
+	}(db)
 }

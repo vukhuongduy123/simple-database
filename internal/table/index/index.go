@@ -17,28 +17,41 @@ type Index struct {
 }
 
 type Item struct {
-	val     any
-	id      any
+	itemKey ItemKey
 	PagePos int64
 }
 
-func (i *Item) Size() uint32 {
-	valSize := 0
-	switch i.val.(type) {
-	case string:
-		valSize = len([]byte(i.val.(string)))
-	default:
-		valSize = binary.Size(i.val)
+type ItemKey struct {
+	id  any
+	val any
+}
+
+func NewItemKey(val, idVal any) *ItemKey {
+	return &ItemKey{val: val, id: idVal}
+}
+
+func (k *ItemKey) MarshalBinary() ([]byte, error) {
+	var buf bytes.Buffer
+
+	valTLV := platformparser.NewTLVMarshaler(k.val)
+	valBuf, err := valTLV.MarshalBinary()
+	if err != nil {
+		return nil, err
 	}
-	return uint32(datatype.LenInt64+binary.Size(i.id)+valSize) + 2*datatype.LenMeta
+	buf.Write(valBuf)
+
+	idValTLV := platformparser.NewTLVMarshaler(k.id)
+	idValBuf, err := idValTLV.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+	buf.Write(idValBuf)
+
+	return buf.Bytes(), nil
 }
 
 func NewItem(val, idVal any, pagePos int64) *Item {
-	return &Item{
-		val:     val,
-		id:      idVal,
-		PagePos: pagePos,
-	}
+	return &Item{itemKey: ItemKey{val: val, id: idVal}, PagePos: pagePos}
 }
 
 func NewIndex(f string, unique bool) *Index {
@@ -56,19 +69,23 @@ func (i *Item) MarshalBinary() ([]byte, error) {
 	if err := binary.Write(&buf, binary.LittleEndian, datatype.TypeIndexItem); err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
+
+	itemKeyBuf, err := i.itemKey.MarshalBinary()
+
+	size := datatype.LenMeta + datatype.LenInt32 + len(itemKeyBuf)
 	// len
-	if err := binary.Write(&buf, binary.LittleEndian, i.Size()); err != nil {
+	if err := binary.Write(&buf, binary.LittleEndian, int32(size)); err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 
-	idValTLV := platformparser.NewTLVMarshaler(i.id)
+	idValTLV := platformparser.NewTLVMarshaler(i.itemKey.id)
 	idValBuf, err := idValTLV.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
 	buf.Write(idValBuf)
 
-	valTLV := platformparser.NewTLVMarshaler(i.val)
+	valTLV := platformparser.NewTLVMarshaler(i.itemKey.val)
 	valBuf, err := valTLV.MarshalBinary()
 	if err != nil {
 		return nil, err
@@ -108,7 +125,7 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	i.id = idBuf
+	i.itemKey.id = idBuf
 	n += int(tlvParser.BytesRead())
 
 	tlvParser = platformparser.NewTLVParser(io.NewReader(bytes.NewReader(buf[n:])))
@@ -116,7 +133,7 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 	if err != nil {
 		return err
 	}
-	i.val = valBuf
+	i.itemKey.id = valBuf
 	n += int(tlvParser.BytesRead())
 
 	pagePosTLV := platformparser.NewTLVUnmarshaler(int64Unmarshaler)
@@ -129,29 +146,29 @@ func (i *Item) UnmarshalBinary(buf []byte) error {
 	return nil
 }
 
-func (i *Index) Add(val, id any, pagePos int64) error {
-	itemBuf, err := NewItem(val, id, pagePos).MarshalBinary()
-	if err != nil {
-		return err
-	}
-	marshaler := platformparser.NewValueMarshaler[any](val)
-	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
+func (i *Index) Add(item *Item) error {
+	itemBuf, err := item.MarshalBinary()
 	if err != nil {
 		return err
 	}
 
 	if i.unique {
-		items, err := i.Get(val, datatype.OperatorEqual)
+		items, err := i.Get(item.itemKey.val, datatype.OperatorEqual)
 		if err != nil {
 			return err
 		}
 
 		if items != nil {
-			return platformerror.NewStackTraceError(fmt.Sprintf("Unique key validate with value: %v", val), platformerror.UniqueKeyViolationErrorCode)
+			return platformerror.NewStackTraceError(fmt.Sprintf("Unique key validate with value: %v", item.itemKey.val), platformerror.UniqueKeyViolationErrorCode)
 		}
 	}
 
-	err = i.tree.Put(valBuf, itemBuf)
+	keyBuf, err := item.itemKey.MarshalBinary()
+	if err != nil {
+		return err
+	}
+
+	err = i.tree.Insert(keyBuf, itemBuf)
 	if err != nil {
 		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 	}
@@ -162,63 +179,47 @@ func (i *Index) Close() error {
 	return i.tree.Close()
 }
 
-func (i *Index) Remove(key, idVal any) error {
-	marshaler := platformparser.NewValueMarshaler[any](key)
-	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
+func (i *Index) Remove(key *ItemKey) error {
+	idBuf, err := key.MarshalBinary()
 	if err != nil {
 		return err
 	}
 
-	err = i.tree.Delete(valBuf)
+	err = i.tree.Remove(idBuf)
 	if err != nil {
 		return err
 	}
-
-	// TODO: handle if index is a list
-	// itemsToRemove := make([][]byte, 0)
-	/*if item.id == id {
-		buf, err := item.MarshalBinary()
-		if err != nil {
-			return err
-		}
-		itemsToRemove = append(itemsToRemove, buf)
-	}
-
-
-	if len(itemsToRemove) == len(key.V) {
-		err = i.tree.Delete(valBuf)
-		if err != nil {
-			return err
-		}
-	} else {
-		for _, v := range itemsToRemove {
-			err = i.tree.Remove(valBuf, v)
-			if err != nil {
-				return err
-			}
-		}
-	}*/
-
 	return nil
 }
 
 func (i *Index) Get(val any, op string) ([]Item, error) {
-	marshaler := platformparser.NewValueMarshaler[any](val)
-	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
+	// in case of unique index, id is same as val
+	var itemKey = NewItemKey(val, val)
+
+	valBuf, err := itemKey.MarshalBinary()
 	if err != nil {
 		return nil, err
 	}
 
-	keys := make([]*btree.Key, 0)
-	var key *btree.Key
+	keys := make([]btree.Key, 0)
+
+	/*var extractFunc = func(data []byte) []byte {
+		if i.unique {
+			return data
+		}
+		// in case of non-unique index, only compare the val part
+		// skip data type get the length of val part
+		size := binary.LittleEndian.Uint32(data[datatype.LenByte:datatype.LenMeta])
+		return data[datatype.LenMeta : datatype.LenMeta+size]
+	}*/
 
 	switch op {
 	case datatype.OperatorEqual:
-		key, err = i.tree.Get(valBuf)
+		key, found, err := i.tree.Get(valBuf)
 		if err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 		}
-		if key == nil {
+		if !found {
 			return nil, nil
 		}
 		keys = append(keys, key)
@@ -233,17 +234,17 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 		}
 	case datatype.OperatorGreaterOrEqual:
-		keys, err = i.tree.GreaterThanEq(valBuf)
+		keys, err = i.tree.GreaterThanOrEqual(valBuf)
 		if err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 		}
 	case datatype.OperatorLessOrEqual:
-		keys, err = i.tree.LessThanEq(valBuf)
+		keys, err = i.tree.LessThanOrEqual(valBuf)
 		if err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 		}
 	case datatype.OperatorNotEqual:
-		keys, err = i.tree.NotEqual(valBuf)
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Not yet implemented : %v", op), platformerror.UnknownOperatorErrorCode)
 	default:
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
 	}
@@ -255,14 +256,12 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 	}
 
 	for _, k := range keys {
-		for _, v := range k.V {
-			item := Item{}
-			err = item.UnmarshalBinary(v)
-			if err != nil {
-				return nil, err
-			}
-			items = append(items, item)
+		item := Item{}
+		err := item.UnmarshalBinary(k.V)
+		if err != nil {
+			return nil, err
 		}
+		items = append(items, item)
 	}
 
 	return items, nil

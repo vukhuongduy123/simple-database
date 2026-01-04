@@ -220,26 +220,6 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		return 0, err
 	}
 
-	uniqueColumns := t.getUniqueColumns()
-	if len(uniqueColumns) != 0 {
-		for key, val := range record {
-			_, ok := uniqueColumns[key]
-			if !ok {
-				continue
-			}
-
-			pages, err := t.indexes[key].Get(val, datatype.OperatorEqual)
-			if err != nil {
-				return 0, err
-			}
-
-			if pages != nil {
-				return 0, platformerror.NewStackTraceError(fmt.Sprintf("Value %v already exist for unique index on column %v", val, key),
-					platformerror.UniqueIndexViolationErrorCode)
-			}
-		}
-	}
-
 	var sizeOfRecord uint32 = 0
 	for _, col := range t.ColumnNames {
 		val, ok := record[col]
@@ -280,6 +260,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		buf.Write(b)
 	}
 
+	// TODO: consider also return the row offset for faster access
 	page, err := t.insertIntoPage(buf)
 	if err != nil {
 		return 0, err
@@ -287,7 +268,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 
 	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 	for k, v := range t.indexes {
-		if err = v.Add(record[k], record[primaryKeyColumnName], page.StartPos); err != nil {
+		if err = v.Add(index.NewItem(record[k], record[primaryKeyColumnName], page.StartPos)); err != nil {
 			return 0, err
 		}
 	}
@@ -664,7 +645,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 				continue
 			}
 
-			if err := idx.Remove(v, rec.Record[primaryKeyColumnName]); err != nil {
+			if err := idx.Remove(index.NewItemKey(v, rec.Record[primaryKeyColumnName])); err != nil {
 				return nil, err
 			}
 		}
@@ -741,9 +722,9 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 			}
 
 			return nil, err
-		} else {
-			lastPagePos, err = t.file.Seek(0, stdio.SeekCurrent)
 		}
+
+		lastPagePos, err = t.file.Seek(0, stdio.SeekCurrent)
 	} else {
 		_, err = t.file.Seek(lastPagePos, stdio.SeekStart)
 		if err != nil {
@@ -785,7 +766,6 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 
 	lastPagePos = page.StartPos
 	return page, err
-
 }
 
 func (t *Table) insertEmptyPage() (*index.Page, error) {
@@ -892,6 +872,7 @@ func (t *Table) updatePageSize(page int64, offset int32) (e error) {
 		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %v, got %v", len(b), n), platformerror.BinaryWriteErrorCode)
 	}
 
+	// This will not likely to happen as delete is only marking records as deleted thus the page will not be empty
 	if newLength == 0 {
 		if err = t.removeEmptyPage(page); err != nil {
 			return err
