@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"log"
 	"os"
@@ -38,25 +39,99 @@ func profiling() {
 }
 
 func testBree() {
-	os.MkdirAll("data/test", 0777)
+	_ = os.MkdirAll("data/test", 0777)
 	b, err := btree2.Open("data/test/mydb")
 	if err != nil {
 		log.Fatal(err)
 	}
-	arr := []string{
-		"F", "S", "Q", "K", "C", "L", "H", "T", "V", "W",
-		"M", "R", "N", "P", "A", "B", "X", "Y", "D", "Z", "E",
-	}
 
-	for _, v := range arr {
-		fmt.Println("Inserting ", v, "")
-		err = b.Insert([]byte(v), []byte(v))
+	for i := 0; i < 1000; i++ {
+		if i%1000 == 0 {
+			fmt.Println(i)
+		}
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		err := b.Insert(buf, buf)
 		if err != nil {
 			log.Fatal(err)
 		}
-		_ = b.PrintTree()
-		fmt.Println()
 	}
+	_ = b.PrintTree()
+
+	_ = b.Remove([]byte(fmt.Sprint(0)))
+	_ = b.PrintTree()
+	size, err := b.Size()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Size of btree", size)
+
+	/*for i := 0; i < 2000_000; i++ {
+		if i%1000 == 0 {
+			fmt.Println(i)
+		}
+		err = b.Remove([]byte(fmt.Sprint(i)))
+		if err != nil {
+			log.Fatal(err)
+		}
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(-i))
+		err = b.Insert(buf, buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	size, err = b.Size()
+	if err != nil {
+		log.Fatal(err)
+	}*/
+	fmt.Println("Size of btree", size)
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		keys, err := b.LessThanOrEqual(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Size of less than or equal to ", i, " is ", len(keys))
+	}
+
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		keys, err := b.LessThan(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Size of less than ", i, " is ", len(keys))
+	}
+
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		keys, err := b.GreaterThanOrEqual(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Size of greater than or equal to ", i, " is ", len(keys))
+	}
+
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		keys, err := b.GreaterThan(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Size of greater than ", i, " is ", len(keys))
+	}
+
+	defer func(b *btree2.BTree) {
+		err := b.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(b)
 
 }
 
@@ -64,7 +139,7 @@ func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
-	profiling()
+	// profiling()
 	testBree()
 
 	/*db, err := internal.CreateDatabase("my_db")

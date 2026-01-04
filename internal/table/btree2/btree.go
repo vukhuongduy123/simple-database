@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	platformerror "simple-database/internal/platform/error"
-	"time"
 
 	"github.com/hashicorp/go-msgpack/codec"
 )
@@ -39,7 +38,7 @@ const DefaultDegree = 2
 
 // Open opens a new or existing BTree
 func Open(name string) (*BTree, error) {
-	pager, err := OpenPager(name, time.Second*5)
+	pager, err := OpenPager(name)
 	if err != nil {
 		return nil, err
 	}
@@ -88,8 +87,7 @@ func (b *BTree) newNode(leaf bool) (*Node, error) {
 		return nil, err
 	}
 
-	// we write the new node to the pager
-	newNode.Page, err = b.Pager.Write(encodedNode)
+	newNode.Page, err = b.Pager.NextPageId()
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +95,6 @@ func (b *BTree) newNode(leaf bool) (*Node, error) {
 	encodedNode, err = encodeNode(newNode)
 	if err != nil {
 		return nil, err
-
 	}
 
 	// Write an updated node
@@ -183,26 +180,39 @@ func (b *BTree) Get(keyVal []byte) (Key, bool, error) {
 	return b.get(keyVal, root)
 }
 
-func (b *BTree) get(keyVal []byte, curNode *Node) (Key, bool, error) {
-	i := 0
-	for i <= len(curNode.Keys) && bytes.Compare(keyVal, curNode.Keys[i].K) > 0 {
-		i++
+func (n *Node) search(key []byte) (int, bool) {
+	low, high := 0, len(n.Keys)
+	var mid int
+	for low < high {
+		mid = (low + high) / 2
+		cmp := bytes.Compare(key, n.Keys[mid].K)
+		switch {
+		case cmp > 0:
+			low = mid + 1
+		case cmp < 0:
+			high = mid
+		default:
+			return mid, true
+		}
 	}
+	return low, false
+}
 
-	if i <= len(curNode.Keys) && bytes.Compare(keyVal, curNode.Keys[i].K) == 0 {
-		return *curNode.Keys[i], true, nil
+func (b *BTree) get(keyVal []byte, n *Node) (Key, bool, error) {
+	for next := n; next != nil; {
+		i, found := next.search(keyVal)
+		if found {
+			return *n.Keys[i], true, nil
+		}
+		if !next.Leaf {
+			nextNode, err := b.readFromDisk(next.Children[0])
+			if err != nil {
+				return Key{}, false, err
+			}
+			next = nextNode
+		}
 	}
-
-	if curNode.Leaf {
-		return Key{}, false, nil
-	}
-
-	nextNode, err := b.readFromDisk(curNode.Children[i])
-	if err != nil {
-		return Key{}, false, err
-	}
-
-	return b.get(keyVal, nextNode)
+	return Key{}, false, nil
 }
 
 // From
@@ -290,7 +300,7 @@ func (b *BTree) printTree(node *Node, indent string, last bool) error {
 	}
 
 	for _, key := range node.Keys {
-		fmt.Printf("%v ", string(key.K))
+		fmt.Printf("%v ", key.K)
 	}
 	fmt.Println()
 
@@ -315,23 +325,32 @@ func (b *BTree) Insert(keyData []byte, valueData []byte) error {
 		return err
 	}
 	if len(root.Keys) == 2*b.Degree-1 {
-		newRoot, err := b.newNode(false)
+		// 1. Create a new node to hold the old root's data
+		oldRootCopy, err := b.newNode(root.Leaf)
 		if err != nil {
 			return err
 		}
-		root.Page = newRoot.Page
+
+		// 2. Move data from Page 0 to the new page
+		oldRootCopy.Keys = root.Keys
+		oldRootCopy.Children = root.Children
+		if err := b.writeToDisk(oldRootCopy); err != nil {
+			return err
+		}
+
+		// 3. Clear Page 0 to become the new parent (the new root)
+		root.Keys = make([]*Key, 0)
+		root.Children = []int64{oldRootCopy.Page}
+		root.Leaf = false // Root is no longer a leaf
 		if err := b.writeToDisk(root); err != nil {
 			return err
 		}
 
-		newRoot.Children = append(newRoot.Children, root.Page)
-		newRoot.Page = 0
-		err = b.splitChildAt(newRoot, 0)
+		// 4. Split the "new" child (the old data)
+		err = b.splitChildAt(root, 0)
 		if err != nil {
 			return err
 		}
-
-		root = newRoot
 	}
 	err = b.insertNonFull(root, keyData, valueData)
 	if err != nil {
@@ -342,10 +361,11 @@ func (b *BTree) Insert(keyData []byte, valueData []byte) error {
 
 func (b *BTree) insertNonFull(curNode *Node, keyData []byte, valueData []byte) error {
 	if curNode.Leaf {
-		i := 0
-		for i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i].K) > 0 {
-			i++
+		i, found := curNode.search(keyData)
+		if found {
+			return platformerror.NewStackTraceError("Key is duplicate", platformerror.BinaryWriteErrorCode)
 		}
+
 		curNode.Keys = addElementAt(curNode.Keys, i, &Key{K: keyData, V: valueData})
 		if err := b.writeToDisk(curNode); err != nil {
 			return err
@@ -353,10 +373,7 @@ func (b *BTree) insertNonFull(curNode *Node, keyData []byte, valueData []byte) e
 		return nil
 	}
 
-	i := 0
-	for i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i].K) > 0 {
-		i++
-	}
+	i, _ := curNode.search(keyData)
 
 	nextNode, err := b.readFromDisk(curNode.Children[i])
 	if err != nil {
@@ -368,9 +385,10 @@ func (b *BTree) insertNonFull(curNode *Node, keyData []byte, valueData []byte) e
 			return err
 		}
 		// determine which of the two children is now the correct one to descend to
-		if bytes.Compare(keyData, nextNode.Keys[b.Degree-1].K) > 0 {
+		if bytes.Compare(keyData, curNode.Keys[i].K) > 0 {
 			i++
 		}
+
 		nextNode, err = b.readFromDisk(curNode.Children[i])
 		if err != nil {
 			return err
@@ -426,15 +444,7 @@ func removeAt[T any](s []T, i int) []T {
 }
 
 func (b *BTree) remove(curNode *Node, keyData []byte) error {
-	i := 0
-	found := false
-	for i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i].K) > 0 {
-		i++
-	}
-
-	if i < len(curNode.Keys) && bytes.Compare(keyData, curNode.Keys[i].K) == 0 {
-		found = true
-	}
+	i, found := curNode.search(keyData)
 
 	if found {
 		// Case: node is a left
@@ -571,10 +581,18 @@ func (b *BTree) remove(curNode *Node, keyData []byte) error {
 				}
 			} else if leftSibling != nil { // Case: merge left siblings
 				err = b.mergeChild(curNode, i-1)
-				child = leftSibling
+				// Get the updated merged node
+				child, err = b.readFromDisk(curNode.Children[i-1])
+				if err != nil {
+					return err
+				}
 			} else if rightSibling != nil { // Case: merge right sibling
 				err = b.mergeChild(curNode, i)
-				child = rightSibling
+
+				child, err = b.readFromDisk(curNode.Children[i])
+				if err != nil {
+					return err
+				}
 			}
 		}
 		return b.remove(child, keyData)
@@ -644,8 +662,36 @@ func (b *BTree) getSuccessor(n *Node) (*Node, error) {
 	return currentNode, nil
 }
 
+func (b *BTree) Size() (int64, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return 0, err
+	}
+	stack := []*Node{root}
+	count := 0
+
+	for len(stack) > 0 {
+		// pop
+		n := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		count += len(n.Keys)
+
+		// push children
+		if !n.Leaf {
+			for _, childID := range n.Children {
+				child, err := b.readFromDisk(childID)
+				if err != nil {
+					return 0, err
+				}
+				stack = append(stack, child)
+			}
+		}
+	}
+	return int64(count), nil
+}
+
 func (b *BTree) writeToDisk(n *Node) error {
-	fmt.Println(n)
 	encodedCurNode, err := encodeNode(n)
 	if err != nil {
 		return err
@@ -663,4 +709,188 @@ func (b *BTree) readFromDisk(pageId int64) (*Node, error) {
 		return nil, err
 	}
 	return decodeNode(data)
+}
+
+func (b *BTree) LessThan(keyData []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+	return b.lessThan(keyData, root)
+}
+
+func (b *BTree) lessThan(keyData []byte, n *Node) ([]Key, error) {
+	// Currently, in the next recursive work, a search is not needed as from previous pos, the b-tree guarantee that key[pos] < keyData
+	pos, _ := n.search(keyData)
+
+	keys := make([]Key, 0)
+
+	for i := 0; i < pos; i++ {
+		if !n.Leaf {
+			k, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+			childKeys, err := b.lessThan(keyData, k)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+		keys = append(keys, *n.Keys[i])
+	}
+
+	if !n.Leaf {
+		k, err := b.readFromDisk(n.Children[pos])
+		if err != nil {
+			return nil, err
+		}
+		childKeys, err := b.lessThan(keyData, k)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, childKeys...)
+	}
+
+	return keys, nil
+}
+
+func (b *BTree) LessThanOrEqual(keyData []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+	return b.lessThanOrEqual(keyData, root)
+}
+
+func (b *BTree) lessThanOrEqual(keyData []byte, n *Node) ([]Key, error) {
+	// Currently, in the next recursive work, a search is not needed as from previous pos, the b-tree guarantee that key[pos] < keyData
+	pos, found := n.search(keyData)
+	if found {
+		pos++
+	}
+
+	keys := make([]Key, 0)
+
+	for i := 0; i < pos; i++ {
+		if !n.Leaf {
+			k, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+			childKeys, err := b.lessThanOrEqual(keyData, k)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+		keys = append(keys, *n.Keys[i])
+	}
+
+	if !n.Leaf {
+		k, err := b.readFromDisk(n.Children[pos])
+		if err != nil {
+			return nil, err
+		}
+		childKeys, err := b.lessThanOrEqual(keyData, k)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, childKeys...)
+	}
+
+	return keys, nil
+}
+
+func (b *BTree) GreaterThan(keyData []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	return b.greaterThan(keyData, root)
+}
+
+func (b *BTree) greaterThan(keyData []byte, n *Node) ([]Key, error) {
+	// Currently, in the next recursive work, a search is not needed as from previous pos, the b-tree guarantee that key[pos] ? keyData
+	pos, found := n.search(keyData)
+	if found {
+		pos++
+	}
+
+	keys := make([]Key, 0)
+
+	for i := pos; i < len(n.Keys); i++ {
+		if !n.Leaf {
+			k, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+			childKeys, err := b.greaterThan(keyData, k)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+		keys = append(keys, *n.Keys[i])
+	}
+
+	if !n.Leaf {
+		k, err := b.readFromDisk(n.Children[len(n.Children)-1])
+		if err != nil {
+			return nil, err
+		}
+		childKeys, err := b.greaterThan(keyData, k)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, childKeys...)
+	}
+
+	return keys, nil
+}
+
+func (b *BTree) GreaterThanOrEqual(keyData []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	return b.greaterThanOrEqual(keyData, root)
+}
+
+func (b *BTree) greaterThanOrEqual(keyData []byte, n *Node) ([]Key, error) {
+	// Currently, in the next recursive work, a search is not needed as from previous pos, the b-tree guarantee that key[pos] > keyData
+	pos, _ := n.search(keyData)
+
+	keys := make([]Key, 0)
+
+	for i := pos; i < len(n.Keys); i++ {
+		if !n.Leaf {
+			k, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+			childKeys, err := b.greaterThanOrEqual(keyData, k)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+		keys = append(keys, *n.Keys[i])
+	}
+
+	if !n.Leaf {
+		k, err := b.readFromDisk(n.Children[len(n.Children)-1])
+		if err != nil {
+			return nil, err
+		}
+		childKeys, err := b.greaterThanOrEqual(keyData, k)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, childKeys...)
+	}
+
+	return keys, nil
 }

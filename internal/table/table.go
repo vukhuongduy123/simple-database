@@ -770,21 +770,21 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 		_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
 		lastPagePos = pagePos
 		return index.NewPage(pagePos), err
-	} else {
-		_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
-		if err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
-		}
-		page, err := t.insertEmptyPage()
-		if err != nil {
-			return nil, err
-		}
-
-		helper.Log.Debugf("Page full, inserting new one at offset %d", page.StartPos)
-
-		lastPagePos = page.StartPos
-		return page, err
 	}
+
+	_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
+	if err != nil {
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
+	}
+	page, err := t.insertEmptyPage()
+	if err != nil {
+		return nil, err
+	}
+
+	helper.Log.Debugf("Page full, inserting new one at offset %d", page.StartPos)
+
+	lastPagePos = page.StartPos
+	return page, err
 
 }
 
