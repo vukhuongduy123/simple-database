@@ -6,7 +6,7 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
-	"simple-database/internal/table/btree2"
+	"simple-database/internal/table/btree"
 )
 
 func profiling() {
@@ -40,7 +40,7 @@ func profiling() {
 
 func testBree() {
 	_ = os.MkdirAll("data/test", 0777)
-	b, err := btree2.Open("data/test/mydb")
+	b, err := btree.Open("data/test/mydb")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func testBree() {
 		fmt.Println("Size of greater than ", i, " is ", len(keys))
 	}
 
-	defer func(b *btree2.BTree) {
+	defer func(b *btree.BTree) {
 		err := b.Close()
 		if err != nil {
 			log.Fatal(err)
