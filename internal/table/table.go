@@ -966,3 +966,14 @@ func (t *Table) pageKey(pagePos int64) string {
 func (t *Table) invalidateCache(page *index.Page) {
 	t.lru.Remove(t.pageKey(page.StartPos))
 }
+
+func (t *Table) LogIndexes() error {
+	for name, idx := range t.indexes {
+		helper.Log.Debugf("Printing name: %s", name)
+		err := idx.LogTree()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}

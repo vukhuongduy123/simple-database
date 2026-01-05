@@ -113,6 +113,26 @@ func testBree() {
 		fmt.Println("Size of greater than ", i, " is ", len(keys))
 	}
 
+	{
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(255))
+		key, _, err := b.Get(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Get ", 255, " is ", key)
+	}
+
+	for i := 0; i < 1000; i++ {
+		buf := make([]byte, 8)
+		binary.BigEndian.PutUint64(buf, uint64(i))
+		key, _, err := b.Get(buf)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Println("Get ", i, " is ", key)
+	}
+
 	defer func(b *btree.BTree) {
 		err := b.Close()
 		if err != nil {
@@ -127,7 +147,7 @@ func main() {
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
 	profiling()
-	// testBree()
+	testBree()
 
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
@@ -159,7 +179,7 @@ func main() {
 
 	{
 		start := time.Now()
-		for i := 0; i < 2000_000; i++ {
+		for i := 0; i < 1000; i++ {
 			helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
 				map[string]interface{}{
@@ -172,10 +192,10 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
+		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 1000/elapsed.Seconds())
 	}
 
-	{
+	/*{
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < 2000_000; i++ {
@@ -221,10 +241,15 @@ func main() {
 		for idx, result := range resultSet.Rows {
 			fmt.Printf("%d: %v\n", idx, result)
 		}
+	}*/
+
+	err = db.Tables["users"].LogIndexes()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	{
-		for i := 0; i < 2000_000; i++ {
+		for i := 0; i < 1000; i++ {
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 				Limit: 1000000,

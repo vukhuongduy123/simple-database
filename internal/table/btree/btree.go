@@ -198,17 +198,17 @@ func (n *Node) search(key []byte) (int, bool) {
 }
 
 func (b *BTree) get(keyVal []byte, n *Node) (Key, bool, error) {
-	for next := n; next != nil; {
-		i, found := next.search(keyVal)
+	for cur := n; cur != nil; {
+		i, found := cur.search(keyVal)
 		if found {
-			return *n.Keys[i], true, nil
+			return *cur.Keys[i], true, nil
 		}
-		if !next.Leaf {
-			nextNode, err := b.readFromDisk(next.Children[0])
+		if !cur.Leaf {
+			nextNode, err := b.readFromDisk(cur.Children[i])
 			if err != nil {
 				return Key{}, false, err
 			}
-			next = nextNode
+			cur = nextNode
 		} else {
 			return Key{}, false, nil
 		}

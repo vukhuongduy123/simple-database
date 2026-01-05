@@ -33,19 +33,26 @@ func NewItemKey(val, idVal any) *ItemKey {
 func (k *ItemKey) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
 
-	valTLV := platformparser.NewTLVMarshaler(k.val)
-	valBuf, err := valTLV.MarshalBinary()
+	marshaler := platformparser.NewValueMarshaler[any](k.val)
+	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
 	if err != nil {
 		return nil, err
 	}
+
+	/*err = binary.Write(&buf, binary.LittleEndian, uint32(len(valBuf)))
+	if err != nil {
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
+	}*/
 	buf.Write(valBuf)
 
-	idValTLV := platformparser.NewTLVMarshaler(k.id)
-	idValBuf, err := idValTLV.MarshalBinary()
+	marshaler = platformparser.NewValueMarshaler[any](k.id)
+	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
+
+	/*err = binary.Write(&buf, binary.LittleEndian, uint32(len(idBuf)))
 	if err != nil {
-		return nil, err
-	}
-	buf.Write(idValBuf)
+		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
+	}*/
+	buf.Write(idBuf)
 
 	return buf.Bytes(), nil
 }
@@ -203,7 +210,7 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 
 	keys := make([]btree.Key, 0)
 
-	/*var extractFunc = func(data []byte) []byte {
+	var extractFunc = func(data []byte) []byte {
 		if i.unique {
 			return data
 		}
@@ -211,18 +218,26 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		// skip data type get the length of val part
 		size := binary.LittleEndian.Uint32(data[datatype.LenByte:datatype.LenMeta])
 		return data[datatype.LenMeta : datatype.LenMeta+size]
-	}*/
+	}
 
 	switch op {
 	case datatype.OperatorEqual:
-		key, found, err := i.tree.Get(valBuf)
-		if err != nil {
-			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		if i.unique {
+			fmt.Println("unique index ", valBuf)
+			key, found, err := i.tree.Get(valBuf)
+			if err != nil {
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+			}
+			if !found {
+				return nil, nil
+			}
+			keys = append(keys, key)
+		} else {
+			keys, err = i.tree.GetPrefix(valBuf, extractFunc)
+			if err != nil {
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+			}
 		}
-		if !found {
-			return nil, nil
-		}
-		keys = append(keys, key)
 	case datatype.OperatorGreater:
 		keys, err = i.tree.GreaterThan(valBuf)
 		if err != nil {
@@ -265,4 +280,8 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 	}
 
 	return items, nil
+}
+
+func (i *Index) LogTree() error {
+	return i.tree.PrintTree()
 }
