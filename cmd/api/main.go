@@ -179,7 +179,7 @@ func main() {
 
 	{
 		start := time.Now()
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 2000_000; i++ {
 			helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
 				map[string]interface{}{
@@ -192,7 +192,7 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 1000/elapsed.Seconds())
+		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
 	}
 
 	/*{
@@ -249,7 +249,7 @@ func main() {
 	}
 
 	{
-		for i := 0; i < 1000; i++ {
+		for i := 0; i < 2000_000; i++ {
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 				Limit: 1000000,

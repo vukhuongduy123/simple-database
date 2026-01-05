@@ -39,19 +39,19 @@ func (k *ItemKey) MarshalBinary() ([]byte, error) {
 		return nil, err
 	}
 
-	/*err = binary.Write(&buf, binary.LittleEndian, uint32(len(valBuf)))
+	err = binary.Write(&buf, binary.LittleEndian, uint32(len(valBuf)))
 	if err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
-	}*/
+	}
 	buf.Write(valBuf)
 
 	marshaler = platformparser.NewValueMarshaler[any](k.id)
 	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
 
-	/*err = binary.Write(&buf, binary.LittleEndian, uint32(len(idBuf)))
+	err = binary.Write(&buf, binary.LittleEndian, uint32(len(idBuf)))
 	if err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
-	}*/
+	}
 	buf.Write(idBuf)
 
 	return buf.Bytes(), nil
@@ -216,14 +216,13 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		}
 		// in case of non-unique index, only compare the val part
 		// skip data type get the length of val part
-		size := binary.LittleEndian.Uint32(data[datatype.LenByte:datatype.LenMeta])
-		return data[datatype.LenMeta : datatype.LenMeta+size]
+		size := binary.LittleEndian.Uint32(data[:datatype.LenInt32])
+		return data[datatype.LenInt32 : datatype.LenMeta+size]
 	}
 
 	switch op {
 	case datatype.OperatorEqual:
 		if i.unique {
-			fmt.Println("unique index ", valBuf)
 			key, found, err := i.tree.Get(valBuf)
 			if err != nil {
 				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
