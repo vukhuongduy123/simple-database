@@ -209,6 +209,8 @@ func (b *BTree) get(keyVal []byte, n *Node) (Key, bool, error) {
 				return Key{}, false, err
 			}
 			next = nextNode
+		} else {
+			return Key{}, false, nil
 		}
 	}
 	return Key{}, false, nil
@@ -892,4 +894,69 @@ func (b *BTree) greaterThanOrEqual(keyData []byte, n *Node) ([]Key, error) {
 	}
 
 	return keys, nil
+}
+
+func (b *BTree) RangeExtractFunc(start []byte, end []byte, extractFunc func(data []byte) []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+
+	return b.rangeExtractFunc(start, end, root, extractFunc)
+}
+
+func (b *BTree) rangeExtractFunc(start []byte, end []byte, n *Node, extractFunc func(data []byte) []byte) ([]Key, error) {
+	keys := make([]Key, 0)
+	if n != nil {
+
+		i := 0
+		for i < len(n.Keys) && bytes.Compare(extractFunc(n.Keys[i].K), start) < 0 {
+			i++
+		}
+		for i < len(n.Keys) && bytes.Compare(extractFunc(n.Keys[i].K), end) <= 0 {
+			if !n.Leaf {
+				child, err := b.readFromDisk(n.Children[i])
+				if err != nil {
+					return nil, err
+				}
+
+				childKeys, err := b.rangeExtractFunc(start, end, child, extractFunc)
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, childKeys...)
+			}
+			keys = append(keys, *n.Keys[i])
+			i++
+		}
+		if !n.Leaf && i < len(n.Children) {
+			child, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+
+			childKeys, err := b.rangeExtractFunc(start, end, child, extractFunc)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+	}
+	return keys, nil
+}
+
+func (b *BTree) GetPrefix(keyData []byte, extractFunc func(data []byte) []byte) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+	start := keyData
+	end := make([]byte, pageSize)
+	copy(end, keyData)
+
+	for i := len(keyData); i < pageSize; i++ {
+		end[i] = 0xFF
+	}
+
+	return b.rangeExtractFunc(start, end, root, extractFunc)
 }
