@@ -147,7 +147,7 @@ func main() {
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
 	profiling()
-	testBree()
+	//testBree()
 
 	db, err := internal.CreateDatabase("my_db")
 	if err != nil {
@@ -161,11 +161,16 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	age, err := column.NewColumn("age", datatype.TypeInt32, column.UsingIndex)
+	if err != nil {
+		log.Fatal(err)
+	}
 	_, err = db.CreateTable(
 		"users",
 		map[string]*column.Column{
 			"id":       id,
 			"username": username,
+			"age":      age,
 		},
 	)
 	if err != nil {
@@ -177,14 +182,16 @@ func main() {
 		log.Fatal(err)
 	}
 
+	iterator := 1000_000
 	{
 		start := time.Now()
-		for i := 0; i < 2000_000; i++ {
-			helper.Log.Debugf("Inserting user %d", i)
+		for i := 0; i < iterator; i++ {
+			//helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
 				map[string]interface{}{
 					"id":       int64(i),
 					"username": "This is a user " + fmt.Sprint(i),
+					"age":      int32(i % 10),
 				},
 			)
 			if err != nil {
@@ -192,14 +199,14 @@ func main() {
 			}
 		}
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
+		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
 
-	/*{
+	{
 		start := time.Now()
 		newValueMap := map[string]any{}
-		for i := 0; i < 2000_000; i++ {
-			helper.Log.Debugf("Updating user %d", i)
+		for i := 0; i < iterator; i++ {
+			//helper.Log.Debugf("Updating user %d", i)
 			whereClause := make(map[string]table.Comparator)
 			whereClause["id"] = table.Comparator{
 				Operator: datatype.OperatorEqual,
@@ -221,42 +228,33 @@ func main() {
 		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
 	}
 
-	{
+	/*{
 		start := time.Now()
 		resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-			Limit: table.UnlimitedSize,
-			WhereClause: map[string]table.Comparator{
-				"username": {
-					Operator: datatype.OperatorEqual,
-					Value:    "This is a user -159",
-				},
-			},
+			Limit:       table.UnlimitedSize,
+			WhereClause: nil,
 		})
 		if e != nil {
 			log.Fatal(e)
 		}
 
 		elapsed := time.Since(start)
-		fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
+		fmt.Printf("Select all: %s for %v\n", elapsed, resultSet)
 		for idx, result := range resultSet.Rows {
 			fmt.Printf("%d: %v\n", idx, result)
 		}
 	}*/
 
-	err = db.Tables["users"].LogIndexes()
-	if err != nil {
-		log.Fatal(err)
-	}
-
 	{
-		for i := 0; i < 2000_000; i++ {
+		for i := 0; i < 10; i++ {
+			fmt.Printf("Select age\n")
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-				Limit: 1000000,
+				Limit: table.UnlimitedSize,
 				WhereClause: map[string]table.Comparator{
-					"id": {
+					"age": {
 						Operator: datatype.OperatorEqual,
-						Value:    int64(i),
+						Value:    int32(i % 10),
 					},
 				},
 			})
@@ -265,10 +263,10 @@ func main() {
 			}
 
 			elapsed := time.Since(start)
-			fmt.Printf("Time elapsed selecting after update: %s for %d\n", elapsed, len(resultSet.Rows))
-			for idx, result := range resultSet.Rows {
+			fmt.Printf("Select age value %d: %s for %v\n", i%10, elapsed, resultSet)
+			/*for idx, result := range resultSet.Rows {
 				fmt.Printf("%d: %v\n", idx, result)
-			}
+			}*/
 		}
 	}
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	platformerror "simple-database/internal/platform/error"
+	"sort"
 
 	"github.com/hashicorp/go-msgpack/codec"
 )
@@ -896,67 +897,49 @@ func (b *BTree) greaterThanOrEqual(keyData []byte, n *Node) ([]Key, error) {
 	return keys, nil
 }
 
-func (b *BTree) RangeExtractFunc(start []byte, end []byte, extractFunc func(data []byte) []byte) ([]Key, error) {
-	root, err := b.getRoot()
-	if err != nil {
-		return nil, err
-	}
+// PrefixSearch finds all entries with keys starting with the given prefix
+func (b *BTree) prefixSearch(prefix []byte, n *Node) ([]Key, error) {
+	var results []Key
 
-	return b.rangeExtractFunc(start, end, root, extractFunc)
-}
+	// 1. Find the starting index using binary search
+	idx := sort.Search(len(n.Keys), func(i int) bool {
+		return bytes.Compare(n.Keys[i].K, prefix) >= 0
+	})
 
-func (b *BTree) rangeExtractFunc(start []byte, end []byte, n *Node, extractFunc func(data []byte) []byte) ([]Key, error) {
-	keys := make([]Key, 0)
-	if n != nil {
-
-		i := 0
-		for i < len(n.Keys) && bytes.Compare(extractFunc(n.Keys[i].K), start) < 0 {
-			i++
-		}
-		for i < len(n.Keys) && bytes.Compare(extractFunc(n.Keys[i].K), end) <= 0 {
-			if !n.Leaf {
-				child, err := b.readFromDisk(n.Children[i])
-				if err != nil {
-					return nil, err
-				}
-
-				childKeys, err := b.rangeExtractFunc(start, end, child, extractFunc)
-				if err != nil {
-					return nil, err
-				}
-				keys = append(keys, childKeys...)
-			}
-			keys = append(keys, *n.Keys[i])
-			i++
-		}
+	for i := idx; i <= len(n.Keys); i++ {
+		// 2. Recursively search the child that comes before this entry
 		if !n.Leaf && i < len(n.Children) {
 			child, err := b.readFromDisk(n.Children[i])
 			if err != nil {
 				return nil, err
 			}
-
-			childKeys, err := b.rangeExtractFunc(start, end, child, extractFunc)
+			childResults, err := b.prefixSearch(prefix, child)
 			if err != nil {
 				return nil, err
 			}
-			keys = append(keys, childKeys...)
+			results = append(results, childResults...)
+		}
+
+		// 3. Check if the current entry matches the prefix
+		if i < len(n.Keys) {
+			if bytes.HasPrefix(n.Keys[i].K, prefix) {
+				results = append(results, *n.Keys[i])
+			} else if bytes.Compare(n.Keys[i].K, prefix) > 0 {
+				// Since keys are sorted, if this key is > prefix and doesn't
+				// start with it, no later keys in this node will match.
+				return results, nil
+			}
 		}
 	}
-	return keys, nil
+
+	return results, nil
 }
 
-func (b *BTree) GetPrefix(keyData []byte, extractFunc func(data []byte) []byte) ([]Key, error) {
+func (b *BTree) GetPrefix(keyData []byte) ([]Key, error) {
 	root, err := b.getRoot()
 	if err != nil {
 		return nil, err
 	}
-	start := keyData
-	end := make([]byte, pageSize)
-	copy(end, keyData)
 
-	for i := len(keyData); i < pageSize; i++ {
-		end[i] = 0xFF
-	}
-
-	return b.rangeExtractFunc(start, end, root, extractFunc)
+	return b.prefixSearch(keyData, root)
 }

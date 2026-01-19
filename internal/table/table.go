@@ -52,6 +52,16 @@ type SelectResult struct {
 	Extra         string
 }
 
+func (sr *SelectResult) String() string {
+	return fmt.Sprintf(
+		"SelectResult{\n  AccessType: %s,\n  RowsInspected: %d,\n  Extra: %s,\n  Total rows:%d}",
+		sr.AccessType,
+		sr.RowsInspected,
+		sr.Extra,
+		len(sr.Rows),
+	)
+}
+
 type Comparator struct {
 	Operator string
 	Value    any
@@ -73,8 +83,8 @@ func (c *SelectCommand) FilteredColumnNames() []string {
 }
 
 type DeleteResult struct {
-	DeletedRecords []*tableparser.RawRecord
-	AffectedPages  []*index.Page
+	DeletedRecords        []*tableparser.RawRecord
+	AffectedCachePageKeys []string
 }
 
 type DeletableRecord struct {
@@ -273,7 +283,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 		}
 	}
 
-	t.invalidateCache(page)
+	t.invalidateCache(t.pageKey(page.StartPos))
 
 	return 1, nil
 }
@@ -281,7 +291,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 func (t *Table) validateColumns(record tableparser.RecordValue) error {
 	for col, val := range record {
 		if _, ok := t.columns[col]; !ok {
-			return platformerror.NewStackTraceError(fmt.Sprintf("Unknown coloum: %s", col),
+			return platformerror.NewStackTraceError(fmt.Sprintf("Unknown column: %s", col),
 				platformerror.ColumnViolationErrorCode)
 		}
 
@@ -377,23 +387,24 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				pageContent = pageContent[:n]
 				reader := bytes.NewReader(pageContent)
 				t.recordParser = tableparser.NewRecordParser(reader, t.ColumnNames)
-				if err = t.lru.Put(pageKey, *index.NewPageWithContent(key.PagePos, pageContent)); err != nil {
-					return nil, err
-				}
+				t.lru.Put(pageKey, *index.NewPageWithContent(key.PagePos, pageContent))
 			} else {
 				page := t.lru.Get(pageKey)
 				selectResult.Extra = "Using page cache"
 				t.recordParser = tableparser.NewRecordParser(bytes.NewReader(page.Content), t.ColumnNames)
 			}
 
+			var readBytes uint32 = 0
+
 			for {
-				err := t.recordParser.Parse()
+				n, err := t.recordParser.Parse()
 				if err != nil {
 					if err == stdio.EOF {
 						break
 					}
 					return nil, err
 				}
+				readBytes += uint32(n)
 
 				rawRecord := t.recordParser.Value
 				selectResult.RowsInspected++
@@ -401,6 +412,13 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				if !t.evaluateWhereClause(command, rawRecord.Record) {
 					continue
 				}
+				if err != nil {
+					return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
+				}
+
+				rawRecord.Offset = uint32(key.PagePos) + readBytes - rawRecord.FullSize
+				rawRecord.CachePageKey = pageKey
+				rawRecord.CachePageKey = pageKey
 
 				selectResult.Rows = append(selectResult.Rows, *rawRecord)
 				if uint32(len(selectResult.Rows)) >= command.Limit {
@@ -414,7 +432,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 		}
 
 		for {
-			err := t.recordParser.Parse()
+			_, err := t.recordParser.Parse()
 			if err != nil {
 				if err == stdio.EOF {
 					return selectResult, nil
@@ -428,8 +446,11 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 			if !t.evaluateWhereClause(command, rawRecord.Record) {
 				continue
 			}
+			curPos, _ := t.file.Seek(0, stdio.SeekCurrent)
+			rawRecord.Offset = uint32(curPos - int64(rawRecord.FullSize))
 
 			selectResult.Rows = append(selectResult.Rows, *rawRecord)
+
 			if uint32(len(selectResult.Rows)) >= command.Limit {
 				return selectResult, nil
 			}
@@ -609,29 +630,12 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	for _, row := range selectResult.Rows {
 		id, _ := row.Record[primaryKeyColumnName]
 
-		keys, err := t.indexes[primaryKeyColumnName].Get(id, datatype.OperatorEqual)
-		if err != nil {
-			return nil, err
-		}
+		deletableRecord := newDeletableRecord(id, int64(row.Offset))
+		deletableRecords = append(deletableRecords, deletableRecord)
 
-		for _, key := range keys {
+		deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, &row)
 
-			if !t.evaluateWhereClause(command, row.Record) {
-				continue
-			}
-
-			pos, err := t.file.Seek(key.PagePos, stdio.SeekStart)
-			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
-			}
-
-			deletableRecord := newDeletableRecord(id, pos-int64(row.FullSize))
-			deletableRecords = append(deletableRecords, deletableRecord)
-
-			deleteResult.DeletedRecords = append(deleteResult.DeletedRecords, &row)
-
-			deleteResult.AffectedPages = append(deleteResult.AffectedPages, index.NewPage(key.PagePos))
-		}
+		deleteResult.AffectedCachePageKeys = append(deleteResult.AffectedCachePageKeys, row.CachePageKey)
 	}
 
 	if _, err := t.markRecordsAsDeleted(deletableRecords); err != nil {
@@ -651,7 +655,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 		}
 	}
 
-	for _, p := range deleteResult.AffectedPages {
+	for _, p := range deleteResult.AffectedCachePageKeys {
 		t.invalidateCache(p)
 	}
 
@@ -737,23 +741,23 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 		return nil, err
 	}
 
-	currPageLen, err := t.reader.ReadUint32()
+	curPageLen, err := t.reader.ReadUint32()
 	if err != nil {
 		return nil, err
 	}
 
-	if currPageLen+lenToFit <= PageSize {
+	if curPageLen+lenToFit <= PageSize {
 		pagePos, err := t.file.Seek(-1*datatype.LenMeta, stdio.SeekCurrent)
 		if err != nil {
 			return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 		}
 
-		_, err = t.file.Seek(int64(currPageLen)+datatype.LenMeta, stdio.SeekCurrent)
+		_, err = t.file.Seek(int64(curPageLen)+datatype.LenMeta, stdio.SeekCurrent)
 		lastPagePos = pagePos
 		return index.NewPage(pagePos), err
 	}
 
-	_, err = t.file.Seek(int64(currPageLen), stdio.SeekCurrent)
+	_, err = t.file.Seek(int64(curPageLen), stdio.SeekCurrent)
 	if err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
@@ -963,8 +967,8 @@ func (t *Table) pageKey(pagePos int64) string {
 	return fmt.Sprintf("%s-%d", t.Name, pagePos)
 }
 
-func (t *Table) invalidateCache(page *index.Page) {
-	t.lru.Remove(t.pageKey(page.StartPos))
+func (t *Table) invalidateCache(pageKey string) {
+	t.lru.Remove(pageKey)
 }
 
 func (t *Table) LogIndexes() error {
@@ -974,6 +978,15 @@ func (t *Table) LogIndexes() error {
 		if err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func (t *Table) LogIndex(name string) error {
+	idx, _ := t.indexes[name]
+	err := idx.LogTree()
+	if err != nil {
+		return err
 	}
 	return nil
 }

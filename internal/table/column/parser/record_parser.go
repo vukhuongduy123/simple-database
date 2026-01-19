@@ -20,6 +20,10 @@ type RecordParser struct {
 // RawRecord represents one record read from the table file
 // As the data is stored in TLV format, it stores the columns in a slice
 type RawRecord struct {
+	// CachePageKey is the key of the page that in the cache which need to be invalid
+	CachePageKey string
+	// Offset is the offset of the record in the file
+	Offset uint32
 	// Size is the size of the record in bytes. This only includes the actual fields
 	Size uint32
 	// FullSize is a sum of [RawRecord.Size] and [types.LenMeta] that includes metadata associated with records such as the type and length bytes
@@ -45,67 +49,83 @@ func NewRawRecord(size uint32, record map[string]interface{}) *RawRecord {
 	}
 }
 
-func (r *RecordParser) Parse() error {
+func (r *RecordParser) Parse() (int32, error) {
 	read := io.NewReader(r.file)
 	r.reader = read
 
+	startPos, err := r.file.Seek(0, stdio.SeekCurrent)
+	if err != nil {
+		return -1, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
+	}
 	t, err := read.ReadByte()
 	if err != nil {
 		if err == stdio.EOF {
-			return err
+			endPos, err := r.file.Seek(0, stdio.SeekCurrent)
+			if err != nil {
+				return -1, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
+			}
+			return int32(endPos - startPos), stdio.EOF
 		}
-		return err
-	}
-
-	if t == datatype.TypePage {
-		// length of page which is not important
-		_, err = read.ReadUint32()
-		// type of next "thing"
-		t, err = read.ReadByte()
-	}
-
-	if t != datatype.TypeRecord && t != datatype.TypeDeletedRecord {
-		return platformerror.NewStackTraceError(fmt.Sprintf("Expected %v or %v, got %v", datatype.TypeRecord, datatype.TypeDeletedRecord,
-			t), platformerror.InvalidDataTypeErrorCode)
+		return -1, err
 	}
 
 	// loop until we find a record
 	for {
+		if t == datatype.TypePage {
+			// length of page which is not important
+			_, err = read.ReadUint32()
+			// type of next "thing"
+			t, err = read.ReadByte()
+		}
+
+		if t != datatype.TypeRecord && t != datatype.TypeDeletedRecord {
+			return -1, platformerror.NewStackTraceError(fmt.Sprintf("Expected %v or %v, got %v", datatype.TypeRecord,
+				datatype.TypeDeletedRecord, t), platformerror.InvalidDataTypeErrorCode)
+		}
+
 		if t == datatype.TypeRecord {
 			break
 		}
 		l, err := r.reader.ReadUint32()
 		if err != nil {
-			return err
+			return -1, err
 		}
 		if _, err = r.file.Seek(int64(l), stdio.SeekCurrent); err != nil {
-			return err
+			return -1, err
 		}
 		t, err = read.ReadByte()
 		if err != nil {
-			return err
+			return -1, err
 		}
 	}
 
 	record := make(map[string]interface{})
 	recordLength, err := read.ReadUint32()
 	if err != nil {
-		return err
+		return -1, err
 	}
 
 	for i := 0; i < len(r.columns); i++ {
 		tlvParser := parser.NewTLVParser(read)
 		value, err := tlvParser.Parse()
 		if errors.Is(err, stdio.EOF) {
+			endPos, err := r.file.Seek(0, stdio.SeekCurrent)
+			if err != nil {
+				return -1, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
+			}
 			r.Value = NewRawRecord(recordLength, record)
-			return nil
+			return int32(endPos - startPos), stdio.EOF
 		}
 		if err != nil {
-			return err
+			return -1, err
 		}
 		record[r.columns[i]] = value
 	}
+	endPos, err := r.file.Seek(0, stdio.SeekCurrent)
+	if err != nil {
+		return -1, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryReadErrorCode)
+	}
 	r.Value = NewRawRecord(recordLength, record)
 
-	return nil
+	return int32(endPos - startPos), nil
 }

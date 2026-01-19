@@ -9,49 +9,45 @@ type LRU[K datatype.Scalar, V any] struct {
 	list       *GenericLinkedList[K]
 	dataMap    map[K]V
 	elementMap map[K]*list.Element
-	cap        int
+	cap        uint32
 }
 
-func NewLRU[K datatype.Scalar, V any](cap int) *LRU[K, V] {
+func NewLRU[K datatype.Scalar, V any](cap uint32) *LRU[K, V] {
 	return &LRU[K, V]{
 		list:       NewLinkedList[K](),
 		cap:        cap,
-		dataMap:    make(map[K]V),
-		elementMap: make(map[K]*list.Element),
+		dataMap:    make(map[K]V, cap),
+		elementMap: make(map[K]*list.Element, cap),
 	}
 }
 
-func (l *LRU[K, V]) Put(key K, val V) error {
-	if len(l.dataMap) >= l.cap {
+func (l *LRU[K, V]) Put(key K, val V) {
+	// If the key already exists, move it to the back
+	if elem, ok := l.elementMap[key]; ok {
+		l.list.Remove(elem)
+	} else if uint32(len(l.dataMap)) >= l.cap {
+		// Evict only when inserting a new key
 		l.removeLeastRecentlyUsed()
 	}
 
-	v := l.list.PushBack(key)
+	elem := l.list.PushBack(key)
 	l.dataMap[key] = val
-	l.elementMap[key] = v
-
-	return nil
-}
-
-func (l *LRU[K, V]) removeLeastRecentlyUsed() {
-	val := l.list.Front()
-	if val == nil {
-		return
-	}
-	delete(l.elementMap, val.Value.(K))
-	delete(l.dataMap, val.Value.(K))
-	l.list.RemoveFront()
+	l.elementMap[key] = elem
 }
 
 func (l *LRU[K, V]) Get(key K) V {
-	var zero V
 	val, ok := l.dataMap[key]
 	if !ok {
+		var zero V
 		return zero
 	}
-	elementKey := l.elementMap[key]
-	l.list.Remove(elementKey)
-	l.list.PushBack(key)
+
+	elem := l.elementMap[key]
+	l.list.Remove(elem)
+
+	newElem := l.list.PushBack(key)
+	l.elementMap[key] = newElem
+
 	return val
 }
 
@@ -61,13 +57,24 @@ func (l *LRU[K, V]) Contains(key K) bool {
 }
 
 func (l *LRU[K, V]) Remove(key K) {
-	_, ok := l.dataMap[key]
+	elem, ok := l.elementMap[key]
 	if !ok {
 		return
 	}
 
-	elementVal := l.elementMap[key]
-	delete(l.dataMap, key)
+	l.list.Remove(elem)
 	delete(l.elementMap, key)
-	l.list.Remove(elementVal)
+	delete(l.dataMap, key)
+}
+
+func (l *LRU[K, V]) removeLeastRecentlyUsed() {
+	elem := l.list.Front()
+	if elem == nil {
+		return
+	}
+
+	key := elem.Value.(K)
+	l.list.RemoveFront()
+	delete(l.elementMap, key)
+	delete(l.dataMap, key)
 }

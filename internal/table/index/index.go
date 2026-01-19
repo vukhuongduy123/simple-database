@@ -38,23 +38,25 @@ func (k *ItemKey) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	err = binary.Write(&buf, binary.LittleEndian, uint32(len(valBuf)))
-	if err != nil {
-		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
-	}
 	buf.Write(valBuf)
 
 	marshaler = platformparser.NewValueMarshaler[any](k.id)
 	idBuf, err := marshaler.MarshalBinaryWithBigEndian()
-
-	err = binary.Write(&buf, binary.LittleEndian, uint32(len(idBuf)))
 	if err != nil {
-		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
+		return nil, err
 	}
 	buf.Write(idBuf)
 
 	return buf.Bytes(), nil
+}
+
+func (k *ItemKey) valSize() (uint32, error) {
+	marshaler := platformparser.NewValueMarshaler[any](k.val)
+	valBuf, err := marshaler.MarshalBinaryWithBigEndian()
+	if err != nil {
+		return 0, err
+	}
+	return uint32(len(valBuf)), nil
 }
 
 func NewItem(val, idVal any, pagePos int64) *Item {
@@ -210,16 +212,6 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 
 	keys := make([]btree.Key, 0)
 
-	var extractFunc = func(data []byte) []byte {
-		if i.unique {
-			return data
-		}
-		// in case of non-unique index, only compare the val part
-		// skip data type get the length of val part
-		size := binary.LittleEndian.Uint32(data[:datatype.LenInt32])
-		return data[datatype.LenInt32 : datatype.LenMeta+size]
-	}
-
 	switch op {
 	case datatype.OperatorEqual:
 		if i.unique {
@@ -232,7 +224,16 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 			}
 			keys = append(keys, key)
 		} else {
-			keys, err = i.tree.GetPrefix(valBuf, extractFunc)
+			var buf bytes.Buffer
+			marshaler := platformparser.NewValueMarshaler[any](val)
+			commonPartBuf, err := marshaler.MarshalBinaryWithBigEndian()
+			if err != nil {
+				return nil, err
+			}
+			buf.Write(commonPartBuf)
+
+			// TODO: edge case where prefix search can return wrong results if val + part of id as byte same as another val
+			keys, err = i.tree.GetPrefix(commonPartBuf)
 			if err != nil {
 				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
 			}
@@ -263,7 +264,7 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Unknown Operator : %v", op), platformerror.UnknownOperatorErrorCode)
 	}
 
-	items := make([]Item, 0)
+	items := make(map[Item]any)
 
 	if keys == nil {
 		return nil, nil
@@ -275,10 +276,16 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		if _, exists := items[item]; !exists {
+			items[item] = 1
+		}
+	}
+	uniqueItems := make([]Item, 0)
+	for k := range items {
+		uniqueItems = append(uniqueItems, k)
 	}
 
-	return items, nil
+	return uniqueItems, nil
 }
 
 func (i *Index) LogTree() error {

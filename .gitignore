@@ -43,3 +43,5 @@ mutex.prof
 
 # Go test coverage
 *.coverprofile
+
+bin/
