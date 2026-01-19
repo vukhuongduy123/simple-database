@@ -15,35 +15,6 @@ import (
 	"time"
 )
 
-func profiling() {
-	// At the start of main()
-	cpuProfile, err := os.Create("cpu.prof")
-	if err != nil {
-		log.Fatal("could not create CPU profile: ", err)
-	}
-	defer func(cpuProfile *os.File) {
-		err := cpuProfile.Close()
-		if err != nil {
-		}
-	}(cpuProfile)
-	if err := pprof.StartCPUProfile(cpuProfile); err != nil {
-		log.Fatal("could not start CPU prof: ", err)
-	}
-	defer pprof.StopCPUProfile()
-
-	// At the end of main(), before exiting
-	memProfile, err := os.Create("mem.prof")
-	if err != nil {
-		log.Fatal("could not create memory prof: ", err)
-	}
-	defer func(memProfile *os.File) {
-		err := memProfile.Close()
-		if err != nil {
-		}
-	}(memProfile)
-	_ = pprof.WriteHeapProfile(memProfile)
-}
-
 func testBree() {
 	_ = os.MkdirAll("data/test", 0777)
 	b, err := btree.Open("data/test/mydb")
@@ -146,7 +117,34 @@ func main() {
 	_ = os.RemoveAll("data")
 	_ = os.Remove("cpu.prof")
 	_ = os.Remove("mem.prof")
-	profiling()
+
+	// At the start of main()
+	cpuProfile, err := os.Create("cpu.prof")
+	if err != nil {
+		log.Fatal("could not create CPU profile: ", err)
+	}
+	defer func(cpuProfile *os.File) {
+		err := cpuProfile.Close()
+		if err != nil {
+		}
+	}(cpuProfile)
+	if err := pprof.StartCPUProfile(cpuProfile); err != nil {
+		log.Fatal("could not start CPU prof: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
+	// At the end of main(), before exiting
+	memProfile, err := os.Create("mem.prof")
+	if err != nil {
+		log.Fatal("could not create memory prof: ", err)
+	}
+	defer func(memProfile *os.File) {
+		err := memProfile.Close()
+		if err != nil {
+		}
+	}(memProfile)
+	_ = pprof.WriteHeapProfile(memProfile)
+
 	//testBree()
 
 	db, err := internal.CreateDatabase("my_db")
@@ -165,12 +163,17 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	record, err := column.NewColumn("record", datatype.TypeInt32, column.Normal)
+	if err != nil {
+		log.Fatal(err)
+	}
 	_, err = db.CreateTable(
 		"users",
 		map[string]*column.Column{
 			"id":       id,
 			"username": username,
 			"age":      age,
+			"record":   record,
 		},
 	)
 	if err != nil {
@@ -191,7 +194,8 @@ func main() {
 				map[string]interface{}{
 					"id":       int64(i),
 					"username": "This is a user " + fmt.Sprint(i),
-					"age":      int32(i % 10),
+					"age":      int32(i % 10_000),
+					"record":   int32(i % 10_000),
 				},
 			)
 			if err != nil {
@@ -225,7 +229,7 @@ func main() {
 		}
 
 		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, 2000_000/elapsed.Seconds())
+		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
 
 	/*{
@@ -246,7 +250,7 @@ func main() {
 	}*/
 
 	{
-		for i := 0; i < 10; i++ {
+		for i := 0; i < 1; i++ {
 			fmt.Printf("Select age\n")
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
@@ -254,7 +258,7 @@ func main() {
 				WhereClause: map[string]table.Comparator{
 					"age": {
 						Operator: datatype.OperatorEqual,
-						Value:    int32(i % 10),
+						Value:    int32(9999),
 					},
 				},
 			})
@@ -264,6 +268,31 @@ func main() {
 
 			elapsed := time.Since(start)
 			fmt.Printf("Select age value %d: %s for %v\n", i%10, elapsed, resultSet)
+			/*for idx, result := range resultSet.Rows {
+				fmt.Printf("%d: %v\n", idx, result)
+			}*/
+		}
+	}
+
+	{
+		for i := 0; i < 1; i++ {
+			fmt.Printf("Select record\n")
+			start := time.Now()
+			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
+				Limit: table.UnlimitedSize,
+				WhereClause: map[string]table.Comparator{
+					"record": {
+						Operator: datatype.OperatorEqual,
+						Value:    int32(9999),
+					},
+				},
+			})
+			if e != nil {
+				log.Fatal(e)
+			}
+
+			elapsed := time.Since(start)
+			fmt.Printf("Select record value %d: %s for %v\n", i%10, elapsed, resultSet)
 			/*for idx, result := range resultSet.Rows {
 				fmt.Printf("%d: %v\n", idx, result)
 			}*/

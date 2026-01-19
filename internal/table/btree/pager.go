@@ -4,7 +4,7 @@ import (
 	"os"
 )
 
-const pageSize = 1024 // Page size
+const pageSize = 4096 // Page size
 
 // Pager manages pages in a file
 type Pager struct {

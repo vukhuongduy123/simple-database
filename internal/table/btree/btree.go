@@ -34,7 +34,7 @@ func (n *Node) String() string {
 	return fmt.Sprintf("page: %d, keys: %v, children: %v, leaf: %v", n.Page, n.Keys, n.Children, n.Leaf)
 }
 
-const DefaultDegree = 2
+const DefaultDegree = 20
 
 // Open opens a new or existing BTree
 func Open(name string) (*BTree, error) {

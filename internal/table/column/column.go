@@ -11,9 +11,10 @@ const (
 )
 
 const (
-	UsingIndex       = 1 << iota
-	UsingUniqueIndex = UsingIndex | 1<<(iota)
-	PrimaryKey       = UsingUniqueIndex | 1<<(iota)
+	Normal           = 0
+	UsingIndex       = 1 << 0
+	UsingUniqueIndex = UsingIndex | 1<<(1)
+	PrimaryKey       = UsingUniqueIndex | 1<<(2)
 )
 
 type Column struct {
