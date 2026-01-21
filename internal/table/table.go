@@ -11,6 +11,7 @@ import (
 	"simple-database/internal/platform"
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
+	"simple-database/internal/platform/evaluator"
 	"simple-database/internal/platform/helper"
 	platformio "simple-database/internal/platform/io"
 	"simple-database/internal/platform/parser"
@@ -68,18 +69,8 @@ type Comparator struct {
 }
 
 type SelectCommand struct {
-	WhereClause map[string]Comparator
-	// TODO handle limit
-	Limit uint32
-}
-
-func (c *SelectCommand) FilteredColumnNames() []string {
-	columnNames := make([]string, 0)
-	for k := range c.WhereClause {
-		columnNames = append(columnNames, k)
-	}
-
-	return columnNames
+	Expression *evaluator.Expression
+	Limit      uint32
 }
 
 type DeleteResult struct {
@@ -336,7 +327,7 @@ func (t *Table) getColumnsUsingIndex(filteredColumnNames []string) (string, bool
 }
 
 func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
-	filteredColumnNames := command.FilteredColumnNames()
+	filteredColumnNames := command.Expression.Keys()
 	if err := t.validateColumnNames(filteredColumnNames); err != nil {
 		return nil, err
 	}
@@ -349,8 +340,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	if ok {
 		selectResult.AccessType = AccessTypeIndex
 
-		colVal := command.WhereClause[columnsUsingIndex].Value
-		op := command.WhereClause[columnsUsingIndex].Operator
+		colVal, op := command.Expression.ValueAndOperator(columnsUsingIndex)
 
 		keys, err := t.indexes[columnsUsingIndex].Get(colVal, op)
 		if err != nil {
@@ -565,16 +555,12 @@ func (t *Table) validateColumnNames(columnNames []string) error {
 }
 
 func (t *Table) evaluateWhereClause(command SelectCommand, record tableparser.RecordValue) bool {
-	if command.WhereClause == nil || len(command.WhereClause) == 0 {
+	if command.Expression == nil {
 		return true
 	}
 
-	for k, v := range command.WhereClause {
-		if !datatype.Compare(record[k], v.Value, v.Operator) {
-			return false
-		}
-	}
-	return true
+	e := evaluator.SimpleEvaluator{}
+	return e.Eval(*command.Expression, record)
 }
 
 func (t *Table) ensureColumnLength(record tableparser.RecordValue) error {
@@ -613,7 +599,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	if err := t.moveToFirstPageRegion(); err != nil {
 		return nil, err
 	}
-	if err := t.validateColumnNames(command.FilteredColumnNames()); err != nil {
+	if err := t.validateColumnNames(command.Expression.Keys()); err != nil {
 		return nil, err
 	}
 	deletableRecords := make([]*DeletableRecord, 0)

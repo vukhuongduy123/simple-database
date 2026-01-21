@@ -36,10 +36,6 @@ data/
 
 # Go profiling outputs
 *.prof
-cpu.prof
-mem.prof
-block.prof
-mutex.prof
 
 # Go test coverage
 *.coverprofile

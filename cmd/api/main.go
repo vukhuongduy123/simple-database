@@ -8,6 +8,7 @@ import (
 	"runtime/pprof"
 	"simple-database/internal"
 	"simple-database/internal/platform/datatype"
+	"simple-database/internal/platform/evaluator"
 	"simple-database/internal/platform/helper"
 	"simple-database/internal/table"
 	"simple-database/internal/table/btree"
@@ -211,17 +212,17 @@ func main() {
 		newValueMap := map[string]any{}
 		for i := 0; i < iterator; i++ {
 			//helper.Log.Debugf("Updating user %d", i)
-			whereClause := make(map[string]table.Comparator)
-			whereClause["id"] = table.Comparator{
-				Operator: datatype.OperatorEqual,
-				Value:    int64(i),
+			e := &evaluator.Expression{
+				Left:  "id",
+				Op:    datatype.OperatorEqual,
+				Right: int64(i),
 			}
 
 			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
 			_, err = db.Tables["users"].Update(
 				table.SelectCommand{
-					WhereClause: whereClause,
-					Limit:       table.UnlimitedSize,
+					Expression: e,
+					Limit:      table.UnlimitedSize,
 				}, newValueMap)
 			if err != nil {
 				log.Fatal(err)
@@ -255,11 +256,10 @@ func main() {
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 				Limit: table.UnlimitedSize,
-				WhereClause: map[string]table.Comparator{
-					"age": {
-						Operator: datatype.OperatorEqual,
-						Value:    int32(9999),
-					},
+				Expression: &evaluator.Expression{
+					Left:  "age",
+					Op:    datatype.OperatorEqual,
+					Right: int32(9999),
 				},
 			})
 			if e != nil {
@@ -280,11 +280,10 @@ func main() {
 			start := time.Now()
 			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 				Limit: table.UnlimitedSize,
-				WhereClause: map[string]table.Comparator{
-					"record": {
-						Operator: datatype.OperatorEqual,
-						Value:    int32(9999),
-					},
+				Expression: &evaluator.Expression{
+					Left:  "record",
+					Op:    datatype.OperatorEqual,
+					Right: int32(9999),
 				},
 			})
 			if e != nil {
