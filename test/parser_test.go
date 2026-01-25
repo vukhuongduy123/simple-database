@@ -9,7 +9,7 @@ import (
 )
 
 func TestParseSelect_WithWhere(t *testing.T) {
-	sql := "SELECT a, b, c FROM age WHERE id > int32(1)"
+	sql := "SELECT a, b, c FROM age WHERE id > int32(1) LIMIT 100"
 
 	selectCommand, err := parser.ParseSelect(sql)
 	require.NoError(t, err)
@@ -29,10 +29,13 @@ func TestParseSelect_WithWhere(t *testing.T) {
 	if len(selectCommand.SelectColumns) != 3 {
 		t.Errorf("Expected 3 columns, got %d", len(selectCommand.SelectColumns))
 	}
+	if selectCommand.Limit != 100 {
+		t.Errorf("Expected 100, got %d", selectCommand.Limit)
+	}
 }
 
 func TestParseSelect_Nested(t *testing.T) {
-	sql := "SELECT a, b, c FROM age WHERE id > int32(1) AND age > int32(2)"
+	sql := "SELECT a, b, c FROM age WHERE id > int32(1) AND age < int32(2) AND a >= int32(3) AND b <= int32(4)"
 
 	selectCommand, err := parser.ParseSelect(sql)
 	require.NoError(t, err)

@@ -5,7 +5,6 @@ import (
 	configs "simple-database/internal/parser/configs"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/evaluator"
-	"simple-database/internal/platform/helper"
 	"strconv"
 
 	"github.com/antlr4-go/antlr/v4"
@@ -107,7 +106,6 @@ func (v *ASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interfa
 }
 
 func (v *ASTVisitor) VisitColumn(ctx *configs.ColumnContext) interface{} {
-	helper.Log.Debugf("Visiting column")
 	return ctx.GetText()
 }
 
@@ -140,6 +138,13 @@ func (v *ASTVisitor) VisitSelectStatement(ctx *configs.SelectStatementContext) i
 		expression := v.Visit(ctx.WhereClause())
 		v.selectCommand.Expression = expression.(*evaluator.Expression)
 	}
+
+	if ctx.LimitClause() != nil {
+		l := v.Visit(ctx.LimitClause())
+		limit, _ := strconv.Atoi(l.(string))
+		v.selectCommand.Limit = uint32(limit)
+	}
+
 	return v.selectCommand
 }
 
@@ -171,4 +176,8 @@ func (v *ASTVisitor) VisitTypeName(ctx *configs.TypeNameContext) interface{} {
 
 func (v *ASTVisitor) VisitTableName(ctx *configs.TableNameContext) interface{} {
 	return ctx.GetText()
+}
+
+func (v *ASTVisitor) VisitLimitClause(ctx *configs.LimitClauseContext) interface{} {
+	return ctx.INTEGER().GetText()
 }
