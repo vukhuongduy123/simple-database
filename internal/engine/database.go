@@ -1,13 +1,13 @@
-package internal
+package engine
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"simple-database/internal/engine/table"
+	"simple-database/internal/engine/table/column"
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/helper"
-	"simple-database/internal/table"
-	"simple-database/internal/table/column"
 	"strings"
 )
 

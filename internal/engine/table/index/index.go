@@ -5,15 +5,15 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	btree2 "simple-database/internal/engine/table/btree"
 	"simple-database/internal/platform/datatype"
 	platformerror "simple-database/internal/platform/error"
 	"simple-database/internal/platform/io"
 	platformparser "simple-database/internal/platform/parser"
-	"simple-database/internal/table/btree"
 )
 
 type Index struct {
-	tree   *btree.BTree
+	tree   *btree2.BTree
 	unique bool
 }
 
@@ -69,7 +69,7 @@ func NewItem(val, idVal any, pagePos int64) *Item {
 }
 
 func NewIndex(f string, unique bool) *Index {
-	t, err := btree.Open(f)
+	t, err := btree2.Open(f)
 	if err != nil {
 		panic(err)
 	}
@@ -207,7 +207,7 @@ func (i *Index) Remove(key *ItemKey) error {
 }
 
 func appendSlice(source []byte, b byte) []byte {
-	size := int(math.Ceil(btree.PageSize/btree.DefaultDegree) * 1.5)
+	size := int(math.Ceil(btree2.PageSize/btree2.DefaultDegree) * 1.5)
 
 	dest := make([]byte, size)
 	copy(dest, source)
@@ -228,7 +228,7 @@ func (i *Index) Get(val any, op string) ([]Item, error) {
 		return nil, err
 	}
 
-	keys := make([]btree.Key, 0)
+	keys := make([]btree2.Key, 0)
 
 	switch op {
 	case datatype.OperatorEqual:

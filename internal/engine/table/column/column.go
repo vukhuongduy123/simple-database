@@ -2,8 +2,8 @@ package column
 
 import (
 	"fmt"
+	"simple-database/internal/engine/table/column/parser"
 	platformerror "simple-database/internal/platform/error"
-	"simple-database/internal/table/column/parser"
 )
 
 const (

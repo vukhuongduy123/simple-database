@@ -4,7 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"simple-database/internal/table/btree"
+	"simple-database/internal/engine/table/btree"
 	"testing"
 )
 

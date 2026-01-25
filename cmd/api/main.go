@@ -5,12 +5,12 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
-	"simple-database/internal"
+	"simple-database/internal/engine"
+	"simple-database/internal/engine/table"
+	"simple-database/internal/engine/table/column"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/evaluator"
 	"simple-database/internal/platform/helper"
-	"simple-database/internal/table"
-	"simple-database/internal/table/column"
 	"time"
 )
 
@@ -48,7 +48,7 @@ func main() {
 
 	//testBree()
 
-	db, err := internal.CreateDatabase("my_db")
+	db, err := engine.CreateDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	db, err = internal.NewDatabase("my_db")
+	db, err = engine.NewDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func main() {
 		}
 	}
 
-	defer func(db *internal.Database) {
+	defer func(db *engine.Database) {
 		err := db.Close()
 		if err != nil {
 		}
