@@ -11,26 +11,36 @@ import (
 func TestParseSelect_WithWhere(t *testing.T) {
 	sql := "SELECT a, b, c FROM age WHERE id > int32(1)"
 
-	expression, err := parser.ParseSelect(sql)
+	selectCommand, err := parser.ParseSelect(sql)
 	require.NoError(t, err)
 
-	if expression.Op != datatype.OperatorGreater {
-		t.Errorf("Expected id, got %s", expression.Op)
+	if selectCommand.Expression.Op != datatype.OperatorGreater {
+		t.Errorf("Expected id, got %s", selectCommand.Expression.Op)
 	}
-	if expression.Right != int32(1) {
-		t.Errorf("Expected 1, got %v", expression.Right)
+	if selectCommand.Expression.Right != int32(1) {
+		t.Errorf("Expected 1, got %v", selectCommand.Expression.Right)
 	}
-	if expression.Left != "id" {
-		t.Errorf("Expected id, got %s", expression.Left)
+	if selectCommand.Expression.Left != "id" {
+		t.Errorf("Expected id, got %s", selectCommand.Expression.Left)
+	}
+	if selectCommand.TableName != "age" {
+		t.Errorf("Expected age, got %s", selectCommand.TableName)
+	}
+	if len(selectCommand.SelectColumns) != 3 {
+		t.Errorf("Expected 3 columns, got %d", len(selectCommand.SelectColumns))
 	}
 }
 
-func TestParseSelect_WithoutWhere(t *testing.T) {
-	sql := "SELECT a, b, c FROM age"
+func TestParseSelect_Nested(t *testing.T) {
+	sql := "SELECT a, b, c FROM age WHERE id > int32(1) AND age > int32(2)"
 
-	expression, err := parser.ParseSelect(sql)
+	selectCommand, err := parser.ParseSelect(sql)
 	require.NoError(t, err)
-	if expression != nil {
-		t.Errorf("Expected nil expression, got %v", expression)
+
+	if selectCommand.TableName != "age" {
+		t.Errorf("Expected age, got %s", selectCommand.TableName)
+	}
+	if len(selectCommand.SelectColumns) != 3 {
+		t.Errorf("Expected 3 columns, got %d", len(selectCommand.SelectColumns))
 	}
 }

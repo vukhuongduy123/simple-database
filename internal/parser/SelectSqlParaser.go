@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"simple-database/internal/engine/table"
 	configs "simple-database/internal/parser/configs"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/evaluator"
@@ -11,6 +12,11 @@ import (
 )
 
 type ASTVisitor struct {
+	selectCommand *table.SelectCommand
+}
+
+func NewASTVisitor() *ASTVisitor {
+	return &ASTVisitor{selectCommand: &table.SelectCommand{}}
 }
 
 func (v *ASTVisitor) Visit(tree antlr.ParseTree) interface{}         { return tree.Accept(v) }
@@ -124,11 +130,17 @@ func (v *ASTVisitor) VisitQuery(ctx *configs.QueryContext) interface{} {
 }
 
 func (v *ASTVisitor) VisitSelectStatement(ctx *configs.SelectStatementContext) interface{} {
-	// If WHERE exists, return its expression
+	selectColumns := v.Visit(ctx.SelectList())
+	v.selectCommand.SelectColumns = selectColumns.([]string)
+
+	tableName := v.Visit(ctx.TableName())
+	v.selectCommand.TableName = tableName.(string)
+
 	if ctx.WhereClause() != nil {
-		return v.Visit(ctx.WhereClause())
+		expression := v.Visit(ctx.WhereClause())
+		v.selectCommand.Expression = expression.(*evaluator.Expression)
 	}
-	return nil
+	return v.selectCommand
 }
 
 func (v *ASTVisitor) VisitWhereClause(ctx *configs.WhereClauseContext) interface{} {
@@ -136,7 +148,17 @@ func (v *ASTVisitor) VisitWhereClause(ctx *configs.WhereClauseContext) interface
 }
 
 func (v *ASTVisitor) VisitSelectList(ctx *configs.SelectListContext) interface{} {
-	return ctx.GetText()
+	if ctx.STAR() != nil {
+		return []string{"*"}
+	}
+
+	// case: column (',' column)*
+	cols := make([]string, 0, len(ctx.AllColumn()))
+	for _, col := range ctx.AllColumn() {
+		cols = append(cols, col.GetText())
+	}
+
+	return cols
 }
 
 func (v *ASTVisitor) VisitComparator(ctx *configs.ComparatorContext) interface{} {

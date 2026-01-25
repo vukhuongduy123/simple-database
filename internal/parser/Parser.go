@@ -1,13 +1,13 @@
 package parser
 
 import (
+	"simple-database/internal/engine/table"
 	configs "simple-database/internal/parser/configs"
-	"simple-database/internal/platform/evaluator"
 
 	"github.com/antlr4-go/antlr/v4"
 )
 
-func ParseSelect(sql string) (*evaluator.Expression, error) {
+func ParseSelect(sql string) (*table.SelectCommand, error) {
 	// 1. Turn raw string into ANTLR input
 	is := antlr.NewInputStream(sql)
 
@@ -23,7 +23,7 @@ func ParseSelect(sql string) (*evaluator.Expression, error) {
 	tree := parser.Query()
 
 	// 5. Walk parse a tree and build your AST
-	visitor := &ASTVisitor{}
+	visitor := NewASTVisitor()
 	result := tree.Accept(visitor)
 
 	if result == nil {
@@ -31,5 +31,5 @@ func ParseSelect(sql string) (*evaluator.Expression, error) {
 	}
 
 	// 6. Cast to your type and return
-	return result.(*evaluator.Expression), nil
+	return result.(*table.SelectCommand), nil
 }

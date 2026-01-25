@@ -40,8 +40,7 @@ func CreateDatabase(name string) (*Database, error) {
 
 func NewDatabase(name string) (*Database, error) {
 	if !exists(name) {
-		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Database %s not existed", name),
-			platformerror.DatabaseNotExistsErrorCode)
+		return CreateDatabase(name)
 	}
 	db := &Database{name: name, path: path(name)}
 	tables, err := db.readTables()

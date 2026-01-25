@@ -219,7 +219,7 @@ func appendSlice(source []byte, b byte) []byte {
 }
 
 //goland:noinspection DuplicatedCode
-func (i *Index) Get(val any, op string) ([]Item, error) {
+func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 	// in case of unique index, id is same as val
 	var itemKey = NewItemKey(val, val)
 

@@ -48,7 +48,7 @@ func main() {
 
 	//testBree()
 
-	db, err := engine.CreateDatabase("my_db")
+	db, err := engine.NewDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func main() {
 				Expression: &evaluator.Expression{
 					Left:  "record",
 					Op:    datatype.OperatorLessOrEqual,
-					Right: int32(10),
+					Right: int32(129),
 				},
 			})
 			if e != nil {

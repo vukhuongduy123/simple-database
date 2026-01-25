@@ -69,8 +69,10 @@ type Comparator struct {
 }
 
 type SelectCommand struct {
-	Expression *evaluator.Expression
-	Limit      uint32
+	SelectColumns []string
+	Expression    *evaluator.Expression
+	Limit         uint32
+	TableName     string
 }
 
 type DeleteResult struct {
