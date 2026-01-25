@@ -107,7 +107,7 @@ func main() {
 		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
 
-	/*{
+	{
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < iterator; i++ {
@@ -132,23 +132,6 @@ func main() {
 		elapsed := time.Since(start)
 		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
-
-	{
-		start := time.Now()
-		resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-			Limit:       table.UnlimitedSize,
-			WhereClause: nil,
-		})
-		if e != nil {
-			log.Fatal(e)
-		}
-
-		elapsed := time.Since(start)
-		fmt.Printf("Select all: %s for %v\n", elapsed, resultSet)
-		for idx, result := range resultSet.Rows {
-			fmt.Printf("%d: %v\n", idx, result)
-		}
-	}*/
 
 	{
 		for i := 0; i < 1; i++ {
