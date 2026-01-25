@@ -55,7 +55,7 @@ type SelectResult struct {
 
 func (sr *SelectResult) String() string {
 	return fmt.Sprintf(
-		"SelectResult\n\tAccess Type: %s\n\tRows Inspected: %d\n\tExtra: %s\n\tTotal Rows:%d",
+		"SelectResult\n\tAccess Type: %s\n\tRows Inspected: %d\n\tExtra: %s\n\tTotal Rows: %d",
 		sr.AccessType,
 		sr.RowsInspected,
 		sr.Extra,

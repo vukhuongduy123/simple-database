@@ -63,8 +63,8 @@ func encodeNode(n *Node) ([]byte, error) {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BinaryWriteErrorCode)
 	}
 
-	if len(encoded) > pageSize {
-		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Node size %d exceed %d", len(encoded), pageSize),
+	if len(encoded) > PageSize {
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Node size %d exceed %d", len(encoded), PageSize),
 			platformerror.BTreeWriteError)
 	}
 
@@ -942,4 +942,66 @@ func (b *BTree) GetPrefix(keyData []byte) ([]Key, error) {
 	}
 
 	return b.prefixSearch(keyData, root)
+}
+
+func (n *Node) searchFirstNByte(key []byte, compareRange int) (int, bool) {
+	low, high := 0, len(n.Keys)
+	var mid int
+	for low < high {
+		mid = (low + high) / 2
+		cmp := bytes.Compare(key[:compareRange], n.Keys[mid].K[:compareRange])
+		switch {
+		case cmp > 0:
+			low = mid + 1
+		case cmp < 0:
+			high = mid
+		default:
+			return mid, true
+		}
+	}
+	return low, false
+}
+
+func (b *BTree) LessThanFirstNByte(keyData []byte, n int) ([]Key, error) {
+	root, err := b.getRoot()
+	if err != nil {
+		return nil, err
+	}
+	return b.lessThanFirstNByte(keyData, n, root)
+}
+
+func (b *BTree) lessThanFirstNByte(keyData []byte, compareRange int, n *Node) ([]Key, error) {
+	// Currently, in the next recursive work, a search is not needed as from previous pos, the b-tree guarantee that key[pos] < keyData
+	pos, _ := n.searchFirstNByte(keyData, compareRange)
+
+	keys := make([]Key, 0)
+
+	for i := 0; i < pos; i++ {
+		if !n.Leaf {
+			k, err := b.readFromDisk(n.Children[i])
+			if err != nil {
+				return nil, err
+			}
+			childKeys, err := b.lessThanFirstNByte(keyData, compareRange, k)
+			if err != nil {
+				return nil, err
+			}
+			keys = append(keys, childKeys...)
+		}
+		keys = append(keys, *n.Keys[i])
+	}
+
+	if !n.Leaf {
+		k, err := b.readFromDisk(n.Children[pos])
+		if err != nil {
+			return nil, err
+		}
+		childKeys, err := b.lessThanFirstNByte(keyData, compareRange, k)
+		if err != nil {
+			return nil, err
+		}
+		keys = append(keys, childKeys...)
+	}
+
+	return keys, nil
 }

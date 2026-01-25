@@ -4,7 +4,7 @@ import (
 	"os"
 )
 
-const pageSize = 4096 // Page size
+const PageSize = 4096 // Page size
 
 // Pager manages pages in a file
 type Pager struct {
@@ -24,7 +24,7 @@ func OpenPager(filename string) (*Pager, error) {
 		return nil, err
 	}
 
-	count := stat.Size() / (pageSize)
+	count := stat.Size() / (PageSize)
 
 	p := &Pager{file: file, count: count}
 
@@ -34,12 +34,12 @@ func OpenPager(filename string) (*Pager, error) {
 // WriteTo writes data to a specific page
 func (p *Pager) WriteTo(pageID int64, data []byte) error {
 	// if data is less than PAGE_SIZE, we need to pad it with null bytes
-	if len(data) < pageSize {
-		data = append(data, make([]byte, pageSize-len(data))...)
+	if len(data) < PageSize {
+		data = append(data, make([]byte, PageSize-len(data))...)
 	}
 
 	// write the data to the file
-	_, err := p.file.WriteAt(data, pageSize*pageID)
+	_, err := p.file.WriteAt(data, PageSize*pageID)
 	if err != nil {
 		return err
 	}
@@ -52,7 +52,7 @@ func (p *Pager) NextPageId() (int64, error) {
 	if err != nil {
 		return -1, err
 	}
-	return fileInfo.Size() / pageSize, nil
+	return fileInfo.Size() / PageSize, nil
 }
 
 // Close closes the file
@@ -69,9 +69,9 @@ func (p *Pager) Close() error {
 // Will gather all the pages that are linked together
 func (p *Pager) GetPage(pageID int64) ([]byte, error) {
 	// get the page
-	data := make([]byte, pageSize)
+	data := make([]byte, PageSize)
 
-	_, err := p.file.ReadAt(data, pageID*pageSize)
+	_, err := p.file.ReadAt(data, pageID*PageSize)
 
 	if err != nil {
 		return nil, err

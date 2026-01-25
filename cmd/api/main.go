@@ -186,7 +186,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	iterator := 1000_000
+	iterator := 1000
 	{
 		start := time.Now()
 		for i := 0; i < iterator; i++ {
@@ -207,7 +207,7 @@ func main() {
 		helper.Log.Debugf("Time elapsed insert: %s. Insertion speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
 
-	{
+	/*{
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < iterator; i++ {
@@ -233,7 +233,7 @@ func main() {
 		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
 	}
 
-	/*{
+	{
 		start := time.Now()
 		resultSet, e := db.Tables["users"].Select(table.SelectCommand{
 			Limit:       table.UnlimitedSize,
@@ -258,8 +258,8 @@ func main() {
 				Limit: table.UnlimitedSize,
 				Expression: &evaluator.Expression{
 					Left:  "age",
-					Op:    datatype.OperatorEqual,
-					Right: int32(9999),
+					Op:    datatype.OperatorLess,
+					Right: int32(129),
 				},
 			})
 			if e != nil {
@@ -267,10 +267,10 @@ func main() {
 			}
 
 			elapsed := time.Since(start)
-			fmt.Printf("Select age value %d: %s for %v\n", i%10, elapsed, resultSet)
-			/*for idx, result := range resultSet.Rows {
+			fmt.Printf("Select age value %d: %s for %v\n", i, elapsed, resultSet)
+			for idx, result := range resultSet.Rows {
 				fmt.Printf("%d: %v\n", idx, result)
-			}*/
+			}
 		}
 	}
 
@@ -282,8 +282,8 @@ func main() {
 				Limit: table.UnlimitedSize,
 				Expression: &evaluator.Expression{
 					Left:  "record",
-					Op:    datatype.OperatorEqual,
-					Right: int32(9999),
+					Op:    datatype.OperatorLessOrEqual,
+					Right: int32(10),
 				},
 			})
 			if e != nil {
