@@ -6,7 +6,7 @@ import (
 
 type Expression struct {
 	Left  any
-	Op    string
+	Op    datatype.Operator
 	Right any
 }
 
@@ -21,7 +21,7 @@ func (e *Expression) Keys() []string {
 	return result
 }
 
-func (e *Expression) ValueAndOperator(key string) (any, string) {
+func (e *Expression) ValueAndOperator(key string) (any, datatype.Operator) {
 	// Check current node
 	if leftKey, ok := e.Left.(string); ok && leftKey == key {
 		return e.Right, e.Op

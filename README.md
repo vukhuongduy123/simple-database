@@ -53,6 +53,11 @@ Requirements:
 
 Build the project:
 
+Generate anltr4 parser:
+```aiexclude
+antlr4 -Dlanguage=Go -visitor -o .\internal\parser\ .\configs\SelectSqlGrammar.g4
+```
+
 For PowerShell on Windows:
 
 ```

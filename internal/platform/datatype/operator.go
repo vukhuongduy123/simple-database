@@ -5,19 +5,37 @@ import (
 	"simple-database/internal/platform/helper"
 )
 
+type Operator string
+
 const (
-	OperatorEqual          = "Equal"
-	OperatorGreater        = "Greater"
-	OperatorLess           = "Less"
-	OperatorGreaterOrEqual = "GreaterOrEqual"
-	OperatorLessOrEqual    = "LessOrEqual"
-	OperatorNotEqual       = "NotEqual"
-	OperatorAnd            = "And"
-	OperatorOr             = "Or"
-	OperatorNot            = "Not"
+	OperatorEqual          Operator = "Equal"
+	OperatorGreater        Operator = "Greater"
+	OperatorLess           Operator = "Less"
+	OperatorGreaterOrEqual Operator = "GreaterOrEqual"
+	OperatorLessOrEqual    Operator = "LessOrEqual"
+	OperatorNotEqual       Operator = "NotEqual"
+	OperatorAnd            Operator = "And"
+	OperatorOr             Operator = "Or"
+	OperatorNot            Operator = "Not"
 )
 
-func Compare(a, b any, op string) bool {
+var symbolOperatorMap = map[string]Operator{
+	"=":   OperatorEqual,
+	">":   OperatorGreater,
+	"<":   OperatorLess,
+	">=":  OperatorGreaterOrEqual,
+	"<=":  OperatorLessOrEqual,
+	"!=":  OperatorNotEqual,
+	"AND": OperatorAnd,
+	"OR":  OperatorOr,
+	"NOT": OperatorNot,
+}
+
+func FromSymbol(symbol string) Operator {
+	return symbolOperatorMap[symbol]
+}
+
+func Compare(a, b any, op Operator) bool {
 	switch va := a.(type) {
 	case int:
 		vb, ok := b.(int)
@@ -63,7 +81,7 @@ func Compare(a, b any, op string) bool {
 	}
 }
 
-func compareScalar[T Scalar](a, b T, op string) bool {
+func compareScalar[T Scalar](a, b T, op Operator) bool {
 	switch op {
 	case OperatorEqual:
 		if helper.IsFloatingPoint(a) {

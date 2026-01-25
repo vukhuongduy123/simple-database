@@ -175,9 +175,6 @@ func main() {
 
 			elapsed := time.Since(start)
 			fmt.Printf("Select record value %d: %s for %v\n", i%10, elapsed, resultSet)
-			/*for idx, result := range resultSet.Rows {
-				fmt.Printf("%d: %v\n", idx, result)
-			}*/
 		}
 	}
 
