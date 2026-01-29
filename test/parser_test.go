@@ -47,3 +47,26 @@ func TestParseSelect_Nested(t *testing.T) {
 		t.Errorf("Expected 3 columns, got %d", len(selectCommand.SelectColumns))
 	}
 }
+
+func TestParseUpdate_WithWhere(t *testing.T) {
+	sql := "UPDATE age SET a = int32(1), b = int32(2), c = int32(3) WHERE id > int32(1) LIMIT 100"
+
+	updateCommand, err := parser.ParseUpdate(sql)
+	require.NoError(t, err)
+
+	if updateCommand.TableName != "age" {
+		t.Errorf("Expected age, got %s", updateCommand.TableName)
+	}
+	if updateCommand.Expression.Op != datatype.OperatorGreater {
+		t.Errorf("Expected id, got %s", updateCommand.Expression.Op)
+	}
+	if updateCommand.Expression.Right != int32(1) {
+		t.Errorf("Expected 1, got %v", updateCommand.Expression.Right)
+	}
+	if updateCommand.Expression.Left != "id" {
+		t.Errorf("Expected id, got %s", updateCommand.Expression.Left)
+	}
+	if len(updateCommand.Record) != 3 {
+		t.Errorf("Expected 3 columns, got %d", len(updateCommand.Record))
+	}
+}

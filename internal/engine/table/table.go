@@ -75,6 +75,35 @@ type SelectCommand struct {
 	TableName     string
 }
 
+type UpdateCommand struct {
+	TableName  string
+	Expression *evaluator.Expression
+	Record     tableparser.RecordValue
+}
+
+type DeleteCommand struct {
+	TableName  string
+	Expression *evaluator.Expression
+}
+
+type InsertCommand struct {
+	TableName string
+	Record    tableparser.RecordValue
+}
+
+func (c *DeleteCommand) toSelectCommand() SelectCommand {
+	return SelectCommand{
+		SelectColumns: []string{"*"},
+		Expression:    c.Expression,
+		Limit:         UnlimitedSize,
+		TableName:     c.TableName,
+	}
+}
+
+func (c *UpdateCommand) toDeleteCommand() DeleteCommand {
+	return DeleteCommand{TableName: c.TableName, Expression: c.Expression}
+}
+
 type DeleteResult struct {
 	DeletedRecords        []*tableparser.RawRecord
 	AffectedCachePageKeys []string
@@ -214,18 +243,18 @@ func (t *Table) readColumnDefinitions() error {
 	return nil
 }
 
-func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
+func (t *Table) Insert(command InsertCommand) (int, error) {
 	if _, err := t.file.Seek(0, stdio.SeekEnd); err != nil {
 		return 0, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
 	}
 
-	if err := t.validateColumns(record); err != nil {
+	if err := t.validateColumns(command.Record); err != nil {
 		return 0, err
 	}
 
 	var sizeOfRecord uint32 = 0
 	for _, col := range t.ColumnNames {
-		val, ok := record[col]
+		val, ok := command.Record[col]
 		if !ok {
 			return 0, platformerror.NewStackTraceError(fmt.Sprintf("Table.Insert: missing column: %s", col), platformerror.MissingColumnErrorCode)
 		}
@@ -254,7 +283,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 	buf.Write(lenBuf)
 
 	for _, col := range t.ColumnNames {
-		v := record[col]
+		v := command.Record[col]
 		tlvMarshaler := parser.NewTLVMarshaler(v)
 		b, err := tlvMarshaler.MarshalBinary()
 		if err != nil {
@@ -271,7 +300,7 @@ func (t *Table) Insert(record tableparser.RecordValue) (int, error) {
 
 	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 	for k, v := range t.indexes {
-		if err = v.Add(index2.NewItem(record[k], record[primaryKeyColumnName], page.StartPos)); err != nil {
+		if err = v.Add(index2.NewItem(command.Record[k], command.Record[primaryKeyColumnName], page.StartPos)); err != nil {
 			return 0, err
 		}
 	}
@@ -597,7 +626,7 @@ func newDeleteResult() *DeleteResult {
 	return &DeleteResult{}
 }
 
-func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
+func (t *Table) Delete(command DeleteCommand) (*DeleteResult, error) {
 	if err := t.moveToFirstPageRegion(); err != nil {
 		return nil, err
 	}
@@ -609,8 +638,7 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 
 	deleteResult := newDeleteResult()
 
-	command.Limit = UnlimitedSize
-	selectResult, err := t.Select(command)
+	selectResult, err := t.Select(command.toSelectCommand())
 	if err != nil {
 		return nil, err
 	}
@@ -650,12 +678,12 @@ func (t *Table) Delete(command SelectCommand) (*DeleteResult, error) {
 	return deleteResult, nil
 }
 
-func (t *Table) Update(command SelectCommand, record tableparser.RecordValue) (int, error) {
-	if err := t.validateColumns(record); err != nil {
+func (t *Table) Update(command UpdateCommand) (int, error) {
+	if err := t.validateColumns(command.Record); err != nil {
 		return 0, err
 	}
 
-	deleteResult, err := t.Delete(command)
+	deleteResult, err := t.Delete(command.toDeleteCommand())
 	if err != nil {
 		return 0, err
 	}
@@ -665,13 +693,13 @@ func (t *Table) Update(command SelectCommand, record tableparser.RecordValue) (i
 	for _, rawRecord := range rawRecords {
 		updatedRecord := make(map[string]interface{})
 		for k, v := range rawRecord.Record {
-			if updatedVal, ok := record[k]; ok {
+			if updatedVal, ok := command.Record[k]; ok {
 				updatedRecord[k] = updatedVal
 			} else {
 				updatedRecord[k] = v
 			}
 		}
-		if _, err = t.Insert(updatedRecord); err != nil {
+		if _, err = t.Insert(InsertCommand{Record: updatedRecord, TableName: t.Name}); err != nil {
 			return 0, err
 		}
 	}

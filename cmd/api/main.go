@@ -46,8 +46,6 @@ func main() {
 	}(memProfile)
 	_ = pprof.WriteHeapProfile(memProfile)
 
-	//testBree()
-
 	db, err := engine.NewDatabase("my_db")
 	if err != nil {
 		log.Fatal(err)
@@ -90,13 +88,15 @@ func main() {
 	{
 		start := time.Now()
 		for i := 0; i < iterator; i++ {
-			//helper.Log.Debugf("Inserting user %d", i)
 			_, err = db.Tables["users"].Insert(
-				map[string]interface{}{
-					"id":       int64(i),
-					"username": "This is a user " + fmt.Sprint(i),
-					"age":      int32(i % 10_000),
-					"record":   int32(i % 10_000),
+				table.InsertCommand{
+					Record: map[string]interface{}{
+						"id":       int64(i),
+						"username": "This is a user " + fmt.Sprint(i),
+						"age":      int32(i % 10_000),
+						"record":   int32(i % 10_000),
+					},
+					TableName: "users",
 				},
 			)
 			if err != nil {
@@ -111,7 +111,6 @@ func main() {
 		start := time.Now()
 		newValueMap := map[string]any{}
 		for i := 0; i < iterator; i++ {
-			//helper.Log.Debugf("Updating user %d", i)
 			e := &evaluator.Expression{
 				Left:  "id",
 				Op:    datatype.OperatorEqual,
@@ -120,10 +119,11 @@ func main() {
 
 			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
 			_, err = db.Tables["users"].Update(
-				table.SelectCommand{
+				table.UpdateCommand{
 					Expression: e,
-					Limit:      table.UnlimitedSize,
-				}, newValueMap)
+					TableName:  "users",
+					Record:     newValueMap,
+				})
 			if err != nil {
 				log.Fatal(err)
 			}

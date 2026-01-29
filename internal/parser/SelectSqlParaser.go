@@ -2,7 +2,7 @@ package parser
 
 import (
 	"simple-database/internal/engine/table"
-	configs "simple-database/internal/parser/configs"
+	configs "simple-database/internal/parser/grammar/select/configs"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/evaluator"
 	"strconv"
@@ -10,20 +10,19 @@ import (
 	"github.com/antlr4-go/antlr/v4"
 )
 
-type ASTVisitor struct {
-	selectCommand *table.SelectCommand
+type SelectCommandASTVisitor struct {
 }
 
-func NewASTVisitor() *ASTVisitor {
-	return &ASTVisitor{selectCommand: &table.SelectCommand{}}
+func NewSelectCommandASTVisitor() *SelectCommandASTVisitor {
+	return &SelectCommandASTVisitor{}
 }
 
-func (v *ASTVisitor) Visit(tree antlr.ParseTree) interface{}         { return tree.Accept(v) }
-func (v *ASTVisitor) VisitChildren(_ antlr.RuleNode) interface{}     { return nil }
-func (v *ASTVisitor) VisitTerminal(_ antlr.TerminalNode) interface{} { return nil }
-func (v *ASTVisitor) VisitErrorNode(_ antlr.ErrorNode) interface{}   { return nil }
+func (v *SelectCommandASTVisitor) Visit(tree antlr.ParseTree) interface{}         { return tree.Accept(v) }
+func (v *SelectCommandASTVisitor) VisitChildren(_ antlr.RuleNode) interface{}     { return nil }
+func (v *SelectCommandASTVisitor) VisitTerminal(_ antlr.TerminalNode) interface{} { return nil }
+func (v *SelectCommandASTVisitor) VisitErrorNode(_ antlr.ErrorNode) interface{}   { return nil }
 
-func (v *ASTVisitor) VisitExpression(ctx *configs.ExpressionContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitExpression(ctx *configs.ExpressionContext) interface{} {
 	if ctx.Predicate() != nil {
 		return v.Visit(ctx.Predicate())
 	}
@@ -44,7 +43,7 @@ func (v *ASTVisitor) VisitExpression(ctx *configs.ExpressionContext) interface{}
 	return &evaluator.Expression{Left: left, Op: datatype.FromSymbol(op), Right: right}
 }
 
-func (v *ASTVisitor) VisitPredicate(ctx *configs.PredicateContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitPredicate(ctx *configs.PredicateContext) interface{} {
 	left := v.Visit(ctx.Operand(0))
 	right := v.Visit(ctx.Operand(1))
 	op := ctx.Comparator().GetText()
@@ -52,7 +51,7 @@ func (v *ASTVisitor) VisitPredicate(ctx *configs.PredicateContext) interface{} {
 	return &evaluator.Expression{Left: left, Op: datatype.FromSymbol(op), Right: right}
 }
 
-func (v *ASTVisitor) VisitOperand(ctx *configs.OperandContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitOperand(ctx *configs.OperandContext) interface{} {
 	if ctx.Column() != nil {
 		return v.Visit(ctx.Column())
 	}
@@ -70,7 +69,7 @@ func (v *ASTVisitor) VisitOperand(ctx *configs.OperandContext) interface{} {
 	return nil
 }
 
-func (v *ASTVisitor) VisitLiteral(ctx *configs.LiteralContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitLiteral(ctx *configs.LiteralContext) interface{} {
 	text := ctx.GetText()
 
 	// string
@@ -83,7 +82,7 @@ func (v *ASTVisitor) VisitLiteral(ctx *configs.LiteralContext) interface{} {
 	return n
 }
 
-func (v *ASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interface{} {
 	typeName := ctx.TypeName().GetText()
 	value := ctx.Literal().GetText()
 
@@ -105,11 +104,11 @@ func (v *ASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interfa
 	}
 }
 
-func (v *ASTVisitor) VisitColumn(ctx *configs.ColumnContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitColumn(ctx *configs.ColumnContext) interface{} {
 	return ctx.GetText()
 }
 
-func (v *ASTVisitor) VisitQuery(ctx *configs.QueryContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitQuery(ctx *configs.QueryContext) interface{} {
 	if ctx.GetChildCount() == 0 {
 		return nil
 	}
@@ -127,32 +126,33 @@ func (v *ASTVisitor) VisitQuery(ctx *configs.QueryContext) interface{} {
 	return v.Visit(child)
 }
 
-func (v *ASTVisitor) VisitSelectStatement(ctx *configs.SelectStatementContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitSelectStatement(ctx *configs.SelectStatementContext) interface{} {
+	command := table.SelectCommand{}
 	selectColumns := v.Visit(ctx.SelectList())
-	v.selectCommand.SelectColumns = selectColumns.([]string)
+	command.SelectColumns = selectColumns.([]string)
 
 	tableName := v.Visit(ctx.TableName())
-	v.selectCommand.TableName = tableName.(string)
+	command.TableName = tableName.(string)
 
 	if ctx.WhereClause() != nil {
 		expression := v.Visit(ctx.WhereClause())
-		v.selectCommand.Expression = expression.(*evaluator.Expression)
+		command.Expression = expression.(*evaluator.Expression)
 	}
 
 	if ctx.LimitClause() != nil {
 		l := v.Visit(ctx.LimitClause())
 		limit, _ := strconv.Atoi(l.(string))
-		v.selectCommand.Limit = uint32(limit)
+		command.Limit = uint32(limit)
 	}
 
-	return v.selectCommand
+	return command
 }
 
-func (v *ASTVisitor) VisitWhereClause(ctx *configs.WhereClauseContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitWhereClause(ctx *configs.WhereClauseContext) interface{} {
 	return v.Visit(ctx.Expression())
 }
 
-func (v *ASTVisitor) VisitSelectList(ctx *configs.SelectListContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitSelectList(ctx *configs.SelectListContext) interface{} {
 	if ctx.STAR() != nil {
 		return []string{"*"}
 	}
@@ -166,18 +166,18 @@ func (v *ASTVisitor) VisitSelectList(ctx *configs.SelectListContext) interface{}
 	return cols
 }
 
-func (v *ASTVisitor) VisitComparator(ctx *configs.ComparatorContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitComparator(ctx *configs.ComparatorContext) interface{} {
 	return ctx.GetText()
 }
 
-func (v *ASTVisitor) VisitTypeName(ctx *configs.TypeNameContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitTypeName(ctx *configs.TypeNameContext) interface{} {
 	return ctx.GetText()
 }
 
-func (v *ASTVisitor) VisitTableName(ctx *configs.TableNameContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitTableName(ctx *configs.TableNameContext) interface{} {
 	return ctx.GetText()
 }
 
-func (v *ASTVisitor) VisitLimitClause(ctx *configs.LimitClauseContext) interface{} {
+func (v *SelectCommandASTVisitor) VisitLimitClause(ctx *configs.LimitClauseContext) interface{} {
 	return ctx.INTEGER().GetText()
 }
