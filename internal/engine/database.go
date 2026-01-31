@@ -51,10 +51,19 @@ func NewDatabase(name string) (*Database, error) {
 	return db, nil
 }
 
-func (db *Database) CreateTable(name string, columns table.Columns) (*table.Table, error) {
-	dbPath := filepath.Join(path(db.name), name) + table.FileExtension
+type DropTableCommand struct {
+	TableName string
+}
+
+type CreateTableCommand struct {
+	TableName string
+	Columns   table.Columns
+}
+
+func (db *Database) CreateTable(command CreateTableCommand) (*table.Table, error) {
+	dbPath := filepath.Join(path(db.name), command.TableName) + table.FileExtension
 	if _, err := os.Open(dbPath); err == nil {
-		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Table %s already existed", name),
+		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Table %s already existed", command.TableName),
 			platformerror.TableAlreadyExistsErrorCode)
 	}
 	f, err := os.Create(dbPath)
@@ -62,18 +71,34 @@ func (db *Database) CreateTable(name string, columns table.Columns) (*table.Tabl
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.OpenFileErrorCode)
 	}
 
-	if err := validateColumnsConstraint(columns); err != nil {
+	if err := validateColumnsConstraint(command.Columns); err != nil {
 		return nil, err
 	}
 
-	t, err := table.NewTableWithColumns(f, columns)
+	t, err := table.NewTableWithColumns(f, command.Columns)
 
 	if err != nil {
 		return nil, err
 	}
 
-	db.Tables[name] = t
+	db.Tables[command.TableName] = t
 	return t, nil
+}
+
+func (db *Database) DropTable(command DropTableCommand) error {
+	if !exists(command.TableName) {
+		return platformerror.NewStackTraceError(fmt.Sprintf("Database %s not existed", command.TableName),
+			platformerror.DatabaseNotExistsErrorCode)
+	}
+	if err := db.Tables[command.TableName].DropIndexes(); err != nil {
+		return err
+	}
+	delete(db.Tables, command.TableName)
+	dbPath := filepath.Join(path(db.name), command.TableName) + table.FileExtension
+	if err := os.Remove(dbPath); err != nil {
+		return platformerror.NewStackTraceError(err.Error(), platformerror.DeleteFileErrorCode)
+	}
+	return nil
 }
 
 func (db *Database) readTables() (Tables, error) {

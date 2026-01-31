@@ -33,6 +33,14 @@ func (p *TLVParser) Parse() (interface{}, error) {
 		dataRead, bytesRead, e := unmarshalValue[int32](data)
 		p.bytesRead = bytesRead
 		return dataRead, e
+	case datatype.TypeFloat64:
+		dataRead, bytesRead, e := unmarshalValue[float64](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
+	case datatype.TypeFloat32:
+		dataRead, bytesRead, e := unmarshalValue[float32](data)
+		p.bytesRead = bytesRead
+		return dataRead, e
 	case datatype.TypeByte:
 		dataRead, bytesRead, e := unmarshalValue[byte](data)
 		p.bytesRead = bytesRead

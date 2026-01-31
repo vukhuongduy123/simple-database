@@ -67,12 +67,14 @@ func main() {
 		log.Fatal(err)
 	}
 	_, err = db.CreateTable(
-		"users",
-		map[string]*column.Column{
-			"id":       id,
-			"username": username,
-			"age":      age,
-			"record":   record,
+		engine.CreateTableCommand{
+			TableName: "users",
+			Columns: map[string]*column.Column{
+				"id":       id,
+				"username": username,
+				"age":      age,
+				"record":   record,
+			},
 		},
 	)
 	if err != nil {

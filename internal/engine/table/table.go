@@ -11,7 +11,7 @@ import (
 	"simple-database/internal/engine/table/column"
 	io2 "simple-database/internal/engine/table/column/io"
 	tableparser "simple-database/internal/engine/table/column/parser"
-	index2 "simple-database/internal/engine/table/index"
+	"simple-database/internal/engine/table/index"
 	indexparser "simple-database/internal/engine/table/index/parser"
 	"simple-database/internal/platform"
 	"simple-database/internal/platform/datatype"
@@ -42,8 +42,8 @@ type Table struct {
 	reader          *platformio.Reader
 	columnDefReader *io2.ColumnDefinitionReader
 	recordParser    *tableparser.RecordParser
-	indexes         map[string]*index2.Index
-	lru             *platform.LRU[string, index2.Page]
+	indexes         map[string]*index.Index
+	lru             *platform.LRU[string, index.Page]
 }
 
 type SelectResult struct {
@@ -157,12 +157,12 @@ func newTable(f *os.File) (*Table, error) {
 		columns:         make(Columns),
 		reader:          r,
 		columnDefReader: columnDefReader,
-		lru:             platform.NewLRU[string, index2.Page](100),
+		lru:             platform.NewLRU[string, index.Page](100),
 	}, nil
 }
 
 func (t *Table) initIndexes() {
-	indexes := make(map[string]*index2.Index)
+	indexes := make(map[string]*index.Index)
 
 	dbPath := GetPath(t.file)
 	tableName, _ := GetTableName(t.file)
@@ -170,7 +170,7 @@ func (t *Table) initIndexes() {
 	for _, col := range t.columns {
 		if col.Is(column.UsingIndex) {
 			idxName := dbPath + "_" + tableName + "_" + helper.ToString(col.Name[:]) + "_idx.bin"
-			idx := index2.NewIndex(idxName, col.Is(column.UsingUniqueIndex))
+			idx := index.NewIndex(idxName, col.Is(column.UsingUniqueIndex))
 			indexes[helper.ToString(col.Name[:])] = idx
 		}
 	}
@@ -300,7 +300,7 @@ func (t *Table) Insert(command InsertCommand) (int, error) {
 
 	primaryKeyColumnName := t.getPrimaryKeyColumnName()
 	for k, v := range t.indexes {
-		if err = v.Add(index2.NewItem(command.Record[k], command.Record[primaryKeyColumnName], page.StartPos)); err != nil {
+		if err = v.Add(index.NewItem(command.Record[k], command.Record[primaryKeyColumnName], page.StartPos)); err != nil {
 			return 0, err
 		}
 	}
@@ -366,7 +366,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 	selectResult := newSelectResult()
 
 	columnsUsingIndex, ok := t.getColumnsUsingIndex(filteredColumnNames)
-	var indexKeys []index2.Item
+	var indexKeys []index.Item
 
 	if ok {
 		selectResult.AccessType = AccessTypeIndex
@@ -408,7 +408,7 @@ func (t *Table) Select(command SelectCommand) (*SelectResult, error) {
 				pageContent = pageContent[:n]
 				reader := bytes.NewReader(pageContent)
 				t.recordParser = tableparser.NewRecordParser(reader, t.ColumnNames)
-				t.lru.Put(pageKey, *index2.NewPageWithContent(key.PagePos, pageContent))
+				t.lru.Put(pageKey, *index.NewPageWithContent(key.PagePos, pageContent))
 			} else {
 				page := t.lru.Get(pageKey)
 				selectResult.Extra = "Using page cache"
@@ -665,7 +665,7 @@ func (t *Table) Delete(command DeleteCommand) (*DeleteResult, error) {
 				continue
 			}
 
-			if err := idx.Remove(index2.NewItemKey(v, rec.Record[primaryKeyColumnName])); err != nil {
+			if err := idx.Remove(index.NewItemKey(v, rec.Record[primaryKeyColumnName])); err != nil {
 				return nil, err
 			}
 		}
@@ -723,7 +723,7 @@ func GetPath(f *os.File) string {
 	return filepath.Dir(f.Name()) + string(filepath.Separator)
 }
 
-func (t *Table) seekToNextPage(lenToFit uint32) (*index2.Page, error) {
+func (t *Table) seekToNextPage(lenToFit uint32) (*index.Page, error) {
 	_, err := t.file.Seek(0, stdio.SeekStart)
 	if err != nil {
 		return nil, platformerror.NewStackTraceError(err.Error(), platformerror.FileSeekErrorCode)
@@ -770,7 +770,7 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index2.Page, error) {
 
 		_, err = t.file.Seek(int64(curPageLen)+datatype.LenMeta, stdio.SeekCurrent)
 		lastPagePos = pagePos
-		return index2.NewPage(pagePos), err
+		return index.NewPage(pagePos), err
 	}
 
 	_, err = t.file.Seek(int64(curPageLen), stdio.SeekCurrent)
@@ -788,7 +788,7 @@ func (t *Table) seekToNextPage(lenToFit uint32) (*index2.Page, error) {
 	return page, err
 }
 
-func (t *Table) insertEmptyPage() (*index2.Page, error) {
+func (t *Table) insertEmptyPage() (*index.Page, error) {
 	buf := bytes.Buffer{}
 
 	// type
@@ -817,11 +817,11 @@ func (t *Table) insertEmptyPage() (*index2.Page, error) {
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Unable to insert new page: start should be positive: %d", startPos),
 			platformerror.PagePosViolationErrorCode)
 	}
-	return index2.NewPage(startPos), nil
+	return index.NewPage(startPos), nil
 }
 
 // insertIntoPage finds the first page that can fit buf and writes it into the page
-func (t *Table) insertIntoPage(buf bytes.Buffer) (*index2.Page, error) {
+func (t *Table) insertIntoPage(buf bytes.Buffer) (*index.Page, error) {
 	page, err := t.seekToNextPage(uint32(buf.Len()))
 	if err != nil {
 		return nil, err
@@ -1004,5 +1004,18 @@ func (t *Table) LogIndex(name string) error {
 	if err != nil {
 		return err
 	}
+	return nil
+}
+
+func (t *Table) DropIndexes() error {
+	dbPath := GetPath(t.file)
+	tableName, _ := GetTableName(t.file)
+	for name := range t.indexes {
+		idxName := dbPath + "_" + tableName + "_" + name + "_idx.bin"
+		if err := os.Remove(idxName); err != nil {
+			return err
+		}
+	}
+	t.indexes = make(map[string]*index.Index)
 	return nil
 }

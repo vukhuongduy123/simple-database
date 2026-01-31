@@ -30,9 +30,9 @@ const (
 	ColumnAlreadyExistsErrorCode
 	CloseErrorCode
 	InvalidNumberOfPrimaryKeysErrorCode
-	UniqueIndexViolationErrorCode
 	BTreeReadError
 	BTreeWriteError
+	DeleteFileErrorCode
 )
 
 // StackTraceError wraps any error and captures a stack trace

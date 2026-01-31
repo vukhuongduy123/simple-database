@@ -62,17 +62,21 @@ type TLVMarshaler[T any] struct {
 func (m *TLVMarshaler[T]) dataLength() (uint32, error) {
 	switch v := any(m.Value).(type) {
 	case byte:
-		return 1, nil
+		return datatype.LenByte, nil
 	case int32:
-		return 4, nil
+		return datatype.LenInt32, nil
 	case int64:
-		return 8, nil
+		return datatype.LenInt64, nil
 	case bool:
-		return 1, nil
+		return datatype.LenByte, nil
+	case float32:
+		return datatype.LenFloat32, nil
+	case float64:
+		return datatype.LenFloat64, nil
 	case string:
 		return uint32(len(v)), nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Uknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %d", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 
@@ -112,6 +116,10 @@ func (m *TLVMarshaler[T]) typeFlag() (byte, error) {
 		return datatype.TypeInt64, nil
 	case bool:
 		return datatype.TypeBool, nil
+	case float32:
+		return datatype.TypeFloat32, nil
+	case float64:
+		return datatype.TypeFloat64, nil
 	case string:
 		return datatype.TypeString, nil
 	default:
@@ -125,14 +133,18 @@ func (m *TLVMarshaler[T]) TLVLength() (uint32, error) {
 		return datatype.LenMeta + datatype.LenByte, nil
 	case int32, uint32:
 		return datatype.LenMeta + datatype.LenInt32, nil
-	case int64:
+	case int64, uint64:
 		return datatype.LenMeta + datatype.LenInt64, nil
+	case float32:
+		return datatype.LenMeta + datatype.LenFloat32, nil
+	case float64:
+		return datatype.LenMeta + datatype.LenFloat64, nil
 	case bool:
 		return datatype.LenMeta + datatype.LenByte, nil
 	case string:
 		return datatype.LenMeta + uint32(len(v)), nil
 	default:
-		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %Degree", v), platformerror.UnknownDatatypeErrorCode)
+		return 0, platformerror.NewStackTraceError(fmt.Sprintf("Unknown data type %v", v), platformerror.UnknownDatatypeErrorCode)
 	}
 }
 

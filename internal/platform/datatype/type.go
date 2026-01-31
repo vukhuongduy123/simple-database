@@ -3,6 +3,8 @@ package datatype
 //goland:noinspection GoUnusedConst
 const (
 	TypeInt64            byte = 10
+	TypeFloat64          byte = 11
+	TypeFloat32          byte = 12
 	TypeString           byte = 2
 	TypeByte             byte = 3
 	TypeBool             byte = 4
@@ -18,10 +20,12 @@ const (
 )
 
 const (
-	LenByte  = 1
-	LenInt32 = 4
-	LenInt64 = 8
-	LenMeta  = 5
+	LenByte    = 1
+	LenInt32   = 4
+	LenInt64   = 8
+	LenMeta    = 5
+	LenFloat32 = 4
+	LenFloat64 = 8
 )
 
 type Scalar interface {
