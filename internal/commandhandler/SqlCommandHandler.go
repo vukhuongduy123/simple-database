@@ -15,7 +15,8 @@ type SqlCommandHandler interface {
 }
 
 type sqlCommandHandler struct {
-	db *engine.Database
+	db   *engine.Database
+	lock *sync.RWMutex
 }
 
 func (h *sqlCommandHandler) Execute(sql string) (interface{}, error) {
@@ -24,36 +25,48 @@ func (h *sqlCommandHandler) Execute(sql string) (interface{}, error) {
 
 	switch {
 	case strings.HasPrefix(normalized, "INSERT"):
+		h.lock.Lock()
+		defer h.lock.Unlock()
 		command, err := parser.ParseInsert(sql)
 		if err != nil {
 			return nil, err
 		}
 		return h.db.Tables[command.TableName].Insert(command)
 	case strings.HasPrefix(normalized, "UPDATE"):
+		h.lock.Lock()
+		defer h.lock.Unlock()
 		command, err := parser.ParseUpdate(sql)
 		if err != nil {
 			return nil, err
 		}
 		return h.db.Tables[command.TableName].Update(command)
 	case strings.HasPrefix(normalized, "DELETE"):
+		h.lock.Lock()
+		defer h.lock.Unlock()
 		command, err := parser.ParseDelete(sql)
 		if err != nil {
 			return nil, err
 		}
 		return h.db.Tables[command.TableName].Delete(command)
 	case strings.HasPrefix(normalized, "SELECT"):
+		h.lock.RLock()
+		defer h.lock.RUnlock()
 		command, err := parser.ParseSelect(sql)
 		if err != nil {
 			return nil, err
 		}
 		return h.db.Tables[command.TableName].Select(command)
 	case strings.HasPrefix(normalized, "DROP TABLE"):
+		h.lock.Lock()
+		defer h.lock.Unlock()
 		command, err := parser.ParseDropTable(sql)
 		if err != nil {
 			return nil, err
 		}
 		return nil, h.db.DropTable(command)
 	case strings.HasPrefix(normalized, "CREATE TABLE"):
+		h.lock.Lock()
+		defer h.lock.Unlock()
 		command, err := parser.ParseCreateTable(sql)
 		if err != nil {
 			return nil, err
@@ -70,7 +83,7 @@ func newSqlCommandHandler() (SqlCommandHandler, error) {
 	if err != nil {
 		panic(err)
 	}
-	return &sqlCommandHandler{db: db}, nil
+	return &sqlCommandHandler{db: db, lock: &sync.RWMutex{}}, nil
 }
 
 var (
