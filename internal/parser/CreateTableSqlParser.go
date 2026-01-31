@@ -1,12 +1,14 @@
 package parser
 
 import (
+	"simple-database/internal/engine"
 	"simple-database/internal/engine/table"
 	"simple-database/internal/engine/table/column"
 	configs "simple-database/internal/parser/grammar/create/configs"
 	"simple-database/internal/platform"
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/helper"
+	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
 )
@@ -41,7 +43,7 @@ func (v *CreateTableCommandASTVisitor) VisitQuery(ctx *configs.QueryContext) int
 }
 
 func (v *CreateTableCommandASTVisitor) VisitCreateTableStatement(ctx *configs.CreateTableStatementContext) interface{} {
-	command := table.CreateTableCommand{}
+	command := engine.CreateTableCommand{}
 
 	tableName := v.Visit(ctx.TableName()).(string)
 	command.TableName = tableName
@@ -51,6 +53,7 @@ func (v *CreateTableCommandASTVisitor) VisitCreateTableStatement(ctx *configs.Cr
 		col := v.Visit(colCtx).(*column.Column)
 		columns[helper.ToString(col.Name[:])] = col
 	}
+	command.Columns = columns
 
 	return command
 }
@@ -63,10 +66,11 @@ func (v *CreateTableCommandASTVisitor) VisitColumnExpression(ctx *configs.Column
 	colName := v.Visit(ctx.Column()).(string)
 	colType := v.Visit(ctx.ColumnDefinition()).(platform.Pair[byte, int32])
 
-	var name [column.NameLength]byte
-	copy(name[:], colName)
-
-	return column.Column{Name: name, DataType: colType.First, Opts: colType.Second}
+	col, err := column.NewColumn(colName, colType.First, colType.Second)
+	if err != nil {
+		panic(err)
+	}
+	return col
 }
 
 func (v *CreateTableCommandASTVisitor) VisitColumn(ctx *configs.ColumnContext) interface{} {
@@ -75,9 +79,12 @@ func (v *CreateTableCommandASTVisitor) VisitColumn(ctx *configs.ColumnContext) i
 
 func (v *CreateTableCommandASTVisitor) VisitColumnDefinition(ctx *configs.ColumnDefinitionContext) interface{} {
 	columnType := v.Visit(ctx.TypeName()).(byte)
-	indexType := int32(v.Visit(ctx.IndexType()).(int))
+	indexType := column.Normal
+	if ctx.IndexType() != nil {
+		indexType = v.Visit(ctx.IndexType()).(int)
+	}
 
-	return platform.Pair[byte, int32]{First: columnType, Second: indexType}
+	return platform.Pair[byte, int32]{First: columnType, Second: int32(indexType)}
 }
 
 func (v *CreateTableCommandASTVisitor) VisitIndexType(ctx *configs.IndexTypeContext) interface{} {
@@ -94,7 +101,7 @@ func (v *CreateTableCommandASTVisitor) VisitIndexType(ctx *configs.IndexTypeCont
 }
 
 func (v *CreateTableCommandASTVisitor) VisitTypeName(ctx *configs.TypeNameContext) interface{} {
-	typeName := ctx.GetText()
+	typeName := strings.ToLower(ctx.GetText())
 
 	switch typeName {
 	case "int32":

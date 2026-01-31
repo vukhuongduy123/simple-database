@@ -65,7 +65,7 @@ func encodeNode(n *Node) ([]byte, error) {
 
 	if len(encoded) > PageSize {
 		return nil, platformerror.NewStackTraceError(fmt.Sprintf("Node size %d exceed %d", len(encoded), PageSize),
-			platformerror.BTreeWriteError)
+			platformerror.BTreeWriteErrorCode)
 	}
 
 	return encoded, nil
@@ -170,7 +170,7 @@ func (b *BTree) getRoot() (*Node, error) {
 
 func (b *BTree) Get(keyVal []byte) (Key, bool, error) {
 	if keyVal == nil {
-		return Key{}, false, platformerror.NewStackTraceError("keyVal cannot be nil", platformerror.BTreeReadError)
+		return Key{}, false, platformerror.NewStackTraceError("keyVal cannot be nil", platformerror.BTreeReadErrorCode)
 	}
 
 	root, err := b.getRoot()

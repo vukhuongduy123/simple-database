@@ -48,6 +48,26 @@ func TestParseSelect_Nested(t *testing.T) {
 	}
 }
 
+func TestParseSelect(t *testing.T) {
+	sql := " SELECT * FROM users WHERE age <= INT32(129) LIMIT 10000000"
+
+	selectCommand, err := parser.ParseSelect(sql)
+	require.NoError(t, err)
+
+	if selectCommand.TableName != "users" {
+		t.Errorf("Expected age, got %s", selectCommand.TableName)
+	}
+	if selectCommand.Limit != 10000000 {
+		t.Errorf("Expected 10000000, got %d", selectCommand.Limit)
+	}
+	if selectCommand.Expression.Left != "age" {
+		t.Errorf("Expected age, got %s", selectCommand.Expression.Left)
+	}
+	if selectCommand.Expression.Right != int32(129) {
+		t.Errorf("Expected 129, got %v", selectCommand.Expression.Right)
+	}
+}
+
 func TestParseUpdate_WithWhere(t *testing.T) {
 	sql := "UPDATE age SET a = int32(1), b = int32(2), c = int32(3) WHERE id > int32(1) LIMIT 100"
 

@@ -6,6 +6,7 @@ import (
 	"simple-database/internal/platform/datatype"
 	"simple-database/internal/platform/evaluator"
 	"strconv"
+	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
 )
@@ -83,7 +84,7 @@ func (v *DeleteCommandASTVisitor) VisitLiteral(ctx *configs.LiteralContext) inte
 }
 
 func (v *DeleteCommandASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interface{} {
-	typeName := ctx.TypeName().GetText()
+	typeName := strings.ToLower(ctx.TypeName().GetText())
 	value := ctx.Literal().GetText()
 
 	switch typeName {

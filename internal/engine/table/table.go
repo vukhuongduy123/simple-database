@@ -710,11 +710,11 @@ func GetTableName(f *os.File) (string, error) {
 	// path/to/db/table.bin
 	parts := strings.Split(f.Name(), ".")
 	if len(parts) != 2 {
-		return "", platformerror.NewStackTraceError(fmt.Sprintf("Invalid table name: %s", f.Name()), platformerror.InvalidTableName)
+		return "", platformerror.NewStackTraceError(fmt.Sprintf("Invalid table name: %s", f.Name()), platformerror.InvalidTableNameErrorCode)
 	}
 	filenameParts := strings.Split(parts[0], string(filepath.Separator))
 	if len(filenameParts) == 0 {
-		return "", platformerror.NewStackTraceError(fmt.Sprintf("Invalid table name: %s", f.Name()), platformerror.InvalidTableName)
+		return "", platformerror.NewStackTraceError(fmt.Sprintf("Invalid table name: %s", f.Name()), platformerror.InvalidTableNameErrorCode)
 	}
 	return filenameParts[len(filenameParts)-1], nil
 }

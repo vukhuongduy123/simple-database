@@ -19,7 +19,7 @@ const (
 	OpenFileErrorCode
 	FileSeekErrorCode
 	InvalidDataTypeErrorCode
-	InvalidTableName
+	InvalidTableNameErrorCode
 	MissingColumnErrorCode
 	ColumnViolationErrorCode
 	PagePosViolationErrorCode
@@ -30,9 +30,11 @@ const (
 	ColumnAlreadyExistsErrorCode
 	CloseErrorCode
 	InvalidNumberOfPrimaryKeysErrorCode
-	BTreeReadError
-	BTreeWriteError
+	BTreeReadErrorCode
+	BTreeWriteErrorCode
 	DeleteFileErrorCode
+	ParsingGrammarErrorCode
+	UnknownCommandErrorCode
 )
 
 // StackTraceError wraps any error and captures a stack trace

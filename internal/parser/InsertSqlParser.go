@@ -4,6 +4,7 @@ import (
 	"simple-database/internal/engine/table"
 	configs "simple-database/internal/parser/grammar/insert/configs"
 	"strconv"
+	"strings"
 
 	"github.com/antlr4-go/antlr/v4"
 )
@@ -72,7 +73,7 @@ func (v *InsertCommandASTVisitor) VisitInsertValues(ctx *configs.InsertValuesCon
 }
 
 func (v *InsertCommandASTVisitor) VisitTypedLiteral(ctx *configs.TypedLiteralContext) interface{} {
-	typeName := ctx.TypeName().GetText()
+	typeName := strings.ToLower(ctx.TypeName().GetText())
 	value := ctx.Literal().GetText()
 
 	switch typeName {

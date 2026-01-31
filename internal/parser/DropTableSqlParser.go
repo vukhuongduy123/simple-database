@@ -1,7 +1,7 @@
 package parser
 
 import (
-	"simple-database/internal/engine/table"
+	"simple-database/internal/engine"
 	configs "simple-database/internal/parser/grammar/drop/configs"
 
 	"github.com/antlr4-go/antlr/v4"
@@ -37,7 +37,7 @@ func (v *DropTableCommandASTVisitor) VisitQuery(ctx *configs.QueryContext) inter
 }
 
 func (v *DropTableCommandASTVisitor) VisitDropTableStatement(ctx *configs.DropTableStatementContext) interface{} {
-	command := table.DropTableCommand{}
+	command := engine.DropTableCommand{}
 	command.TableName = v.Visit(ctx.TableName()).(string)
 
 	return command

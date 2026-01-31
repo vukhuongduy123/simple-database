@@ -63,23 +63,21 @@ func (e *Expression) collectKeys(out map[string]struct{}) {
 		return
 	}
 
-	// check left
+	// collect left value
 	switch v := e.Left.(type) {
 	case string:
 		out[v] = struct{}{}
-	case Expression:
-		v.collectKeys(out)
 	case *Expression:
+		v.collectKeys(out)
+	case Expression:
 		v.collectKeys(out)
 	}
 
-	// check right
+	// recurse into right only if it is an expression so nested expressions are still traversed
 	switch v := e.Right.(type) {
-	case string:
-		out[v] = struct{}{}
-	case Expression:
-		v.collectKeys(out)
 	case *Expression:
+		v.collectKeys(out)
+	case Expression:
 		v.collectKeys(out)
 	}
 }

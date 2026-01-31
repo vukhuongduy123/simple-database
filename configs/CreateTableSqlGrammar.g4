@@ -32,10 +32,6 @@ typeName
     : INT32 | INT64 | FLOAT32 | FLOAT64 | STRING_T
     ;
 
-IDENTIFIER
-    : [a-zA-Z_][a-zA-Z0-9_]*
-    ;
-
 CREATE     : [Cc][Rr][Ee][Aa][Tt][Ee];
 TABLE      : [Tt][Aa][Bb][Ll][Ee];
 COMMA      : ',';
@@ -51,5 +47,9 @@ INT64    : [Ii][Nn][Tt] '64';
 FLOAT32  : [Ff][Ll][Oo][Aa][Tt] '32';
 FLOAT64  : [Ff][Ll][Oo][Aa][Tt] '64';
 STRING_T : [Ss][Tt][Rr][Ii][Nn][Gg];
+
+IDENTIFIER
+    : [a-zA-Z_][a-zA-Z0-9_]*
+    ;
 
 WS : [ \t\r\n]+ -> skip;

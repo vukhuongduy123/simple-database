@@ -184,7 +184,7 @@ func (i *Index) Add(item *Item) error {
 
 	err = i.tree.Insert(keyBuf, itemBuf)
 	if err != nil {
-		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+		return platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 	}
 	return nil
 }
@@ -235,7 +235,7 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 		if i.unique {
 			key, found, err := i.tree.Get(itemKeyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 			if !found {
 				return nil, nil
@@ -250,14 +250,14 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 			// TODO: edge case where prefix search can return wrong results if val + part of id as byte same as another val
 			keys, err = i.tree.GetPrefix(keyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		}
 	case datatype.OperatorGreater:
 		if i.unique {
 			keys, err = i.tree.GreaterThan(itemKeyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		} else {
 			keyBuf, err := itemKey.MarshalValueBinary()
@@ -266,14 +266,14 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 			}
 			keys, err = i.tree.GreaterThan(keyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		}
 	case datatype.OperatorLess:
 		if i.unique {
 			keys, err = i.tree.LessThan(itemKeyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		} else {
 			keyBuf, err := itemKey.MarshalValueBinary()
@@ -282,14 +282,14 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 			}
 			keys, err = i.tree.LessThan(keyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		}
 	case datatype.OperatorGreaterOrEqual:
 		if i.unique {
 			keys, err = i.tree.GreaterThanOrEqual(itemKeyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		} else {
 			keyBuf, err := itemKey.MarshalValueBinary()
@@ -298,7 +298,7 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 			}
 			keys, err = i.tree.GreaterThanOrEqual(appendSlice(keyBuf, byte(0x00)))
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		}
 
@@ -306,7 +306,7 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 		if i.unique {
 			keys, err = i.tree.LessThanOrEqual(itemKeyBuf)
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		} else {
 			keyBuf, err := itemKey.MarshalValueBinary()
@@ -315,7 +315,7 @@ func (i *Index) Get(val any, op datatype.Operator) ([]Item, error) {
 			}
 			keys, err = i.tree.LessThanOrEqual(appendSlice(keyBuf, byte(0xff)))
 			if err != nil {
-				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadError)
+				return nil, platformerror.NewStackTraceError(err.Error(), platformerror.BTreeReadErrorCode)
 			}
 		}
 	case datatype.OperatorNotEqual:

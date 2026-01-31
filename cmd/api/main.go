@@ -5,11 +5,8 @@ import (
 	"log"
 	"os"
 	"runtime/pprof"
-	"simple-database/internal/engine"
+	"simple-database/internal/commandhandler"
 	"simple-database/internal/engine/table"
-	"simple-database/internal/engine/table/column"
-	"simple-database/internal/platform/datatype"
-	"simple-database/internal/platform/evaluator"
 	"simple-database/internal/platform/helper"
 	"time"
 )
@@ -46,63 +43,25 @@ func main() {
 	}(memProfile)
 	_ = pprof.WriteHeapProfile(memProfile)
 
-	db, err := engine.NewDatabase("my_db")
+	handler, err := commandhandler.GetSqlCommandHandler()
 	if err != nil {
 		log.Fatal(err)
 	}
-	id, err := column.NewColumn("id", datatype.TypeInt64, column.PrimaryKey)
-	if err != nil {
-		log.Fatal(err)
-	}
-	username, err := column.NewColumn("username", datatype.TypeString, column.UsingIndex)
-	if err != nil {
-		log.Fatal(err)
-	}
-	age, err := column.NewColumn("age", datatype.TypeInt32, column.UsingIndex)
-	if err != nil {
-		log.Fatal(err)
-	}
-	record, err := column.NewColumn("record", datatype.TypeInt32, column.Normal)
-	if err != nil {
-		log.Fatal(err)
-	}
-	_, err = db.CreateTable(
-		engine.CreateTableCommand{
-			TableName: "users",
-			Columns: map[string]*column.Column{
-				"id":       id,
-				"username": username,
-				"age":      age,
-				"record":   record,
-			},
-		},
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	db, err = engine.NewDatabase("my_db")
+	_, err = handler.Execute("CREATE TABLE users (id INT64 PRIMARY KEY, username STRING, age INT32 INDEX, record INT32)")
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	iterator := 1000
+
 	{
 		start := time.Now()
 		for i := 0; i < iterator; i++ {
-			_, err = db.Tables["users"].Insert(
-				table.InsertCommand{
-					Record: map[string]interface{}{
-						"id":       int64(i),
-						"username": "This is a user " + fmt.Sprint(i),
-						"age":      int32(i % 10_000),
-						"record":   int32(i % 10_000),
-					},
-					TableName: "users",
-				},
-			)
+			sql := fmt.Sprintf("INSERT INTO users (id, username, age, record) VALUES (INT64(%d), STRING('This is a user %d'), INT32(%d), INT32(%d))",
+				i, i, i%10_000, i%10_000)
+			_, err = handler.Execute(sql)
 			if err != nil {
-				panic(err)
+				log.Fatal(err)
 			}
 		}
 		elapsed := time.Since(start)
@@ -110,50 +69,18 @@ func main() {
 	}
 
 	{
-		start := time.Now()
-		newValueMap := map[string]any{}
-		for i := 0; i < iterator; i++ {
-			e := &evaluator.Expression{
-				Left:  "id",
-				Op:    datatype.OperatorEqual,
-				Right: int64(i),
-			}
-
-			newValueMap["username"] = "This is a user " + fmt.Sprint(-i)
-			_, err = db.Tables["users"].Update(
-				table.UpdateCommand{
-					Expression: e,
-					TableName:  "users",
-					Record:     newValueMap,
-				})
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
-
-		elapsed := time.Since(start)
-		helper.Log.Debugf("Time elapsed update: %s.Update speed %f/seconds\n", elapsed, float64(iterator)/elapsed.Seconds())
-	}
-
-	{
 		for i := 0; i < 1; i++ {
 			fmt.Printf("Select age\n")
 			start := time.Now()
-			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-				Limit: table.UnlimitedSize,
-				Expression: &evaluator.Expression{
-					Left:  "age",
-					Op:    datatype.OperatorLess,
-					Right: int32(129),
-				},
-			})
+			sql := fmt.Sprintf("SELECT * FROM users WHERE age <= INT32(129) LIMIT 10000000")
+			resultSet, e := handler.Execute(sql)
 			if e != nil {
 				log.Fatal(e)
 			}
 
 			elapsed := time.Since(start)
-			fmt.Printf("Select age value %d: %s for %v\n", i, elapsed, resultSet)
-			for idx, result := range resultSet.Rows {
+			fmt.Printf("Select age value %d: %s for %v\n", i, elapsed, resultSet.(*table.SelectResult))
+			for idx, result := range resultSet.(*table.SelectResult).Rows {
 				fmt.Printf("%d: %v\n", idx, result)
 			}
 		}
@@ -163,26 +90,17 @@ func main() {
 		for i := 0; i < 1; i++ {
 			fmt.Printf("Select record\n")
 			start := time.Now()
-			resultSet, e := db.Tables["users"].Select(table.SelectCommand{
-				Limit: table.UnlimitedSize,
-				Expression: &evaluator.Expression{
-					Left:  "record",
-					Op:    datatype.OperatorLessOrEqual,
-					Right: int32(129),
-				},
-			})
+			sql := fmt.Sprintf("SELECT * FROM users WHERE record <= INT32(129) LIMIT 10000000")
+			resultSet, e := handler.Execute(sql)
 			if e != nil {
 				log.Fatal(e)
 			}
 
 			elapsed := time.Since(start)
-			fmt.Printf("Select record value %d: %s for %v\n", i%10, elapsed, resultSet)
+			fmt.Printf("Select age value %d: %s for %v\n", i, elapsed, resultSet.(*table.SelectResult))
+			for idx, result := range resultSet.(*table.SelectResult).Rows {
+				fmt.Printf("%d: %v\n", idx, result)
+			}
 		}
 	}
-
-	defer func(db *engine.Database) {
-		err := db.Close()
-		if err != nil {
-		}
-	}(db)
 }
