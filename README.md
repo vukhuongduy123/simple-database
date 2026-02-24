@@ -92,7 +92,7 @@ Roadmap / Recommended next steps (short-term)
 - Complete Pager Read/Write implementations and create deterministic tests for round-trip persistence of nodes.
 - Add basic SQL parser support for `CREATE TABLE`, `INSERT INTO`, and `SELECT` (simple equality and range queries), and map them to table/index operations.
 - Add a simple locking mechanism (coarse-grained table lock to start) and tests for concurrent access.
-- Add unit tests for all critical components.
+- Add unit tests for all critical parts.
 
 Contributing
 ------------
